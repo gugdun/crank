@@ -168,7 +168,7 @@ int main(int argc, char *argv[]) {
         if (sky_tex[0] && sky_tex[1] && sky_tex[2] && sky_tex[3] && sky_tex[4] && sky_tex[5]) {
             r_draw_sky(camera.position, sky_tex[0]->id, sky_tex[1]->id, sky_tex[2]->id, sky_tex[3]->id, sky_tex[4]->id, sky_tex[5]->id);
         }
-        r_draw_mesh(m);
+        r_draw_mesh(m, camera.position);
         EndMode3D();
 
         DrawFPS(16, 16);

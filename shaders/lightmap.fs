@@ -8,11 +8,12 @@ in vec2 fragLightCoord;
 uniform sampler2D texture0;   // diffuse
 uniform sampler2D texture1;   // lightmap atlas
 uniform float lightScale;     // brightness multiplier (typically ~2.0)
+uniform float surfaceAlpha;   // per-surface alpha override (1.0 opaque, <1.0 transparent)
 
 out vec4 finalColor;
 
 void main() {
     vec4 diffuse = texture(texture0, fragTexCoord);
     vec3 light = texture(texture1, fragLightCoord).rgb * lightScale;
-    finalColor = vec4(diffuse.rgb * light, diffuse.a);
+    finalColor = vec4(diffuse.rgb * light, diffuse.a * surfaceAlpha);
 }
