@@ -29,7 +29,16 @@ add_executable(${PROJECT_NAME}
     src/lightmap.c
     src/texture.c
     src/render.c
+    src/ecs/ecs.c
+    src/res/res_map.c
+    src/res/res_mesh.c
+    src/res/res_texture.c
+    src/sys/sys_fpcam.c
+    src/sys/sys_map.c
+    src/sys/sys_skybox.c
 )
+
+target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE raylib m)
 
