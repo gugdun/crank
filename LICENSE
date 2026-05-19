@@ -1,0 +1,110 @@
+CRANK ENGINE - PROPRIETARY LICENSE
+Copyright (C) 2026 Romance Games. All rights reserved.
+
+1. Definitions
+
+   "Software" means the source code, object code, shaders, documentation,
+   build scripts, and any other materials contained in this repository,
+   together with any modifications, enhancements, or derivative works
+   thereof.
+
+   "Licensor" means Romance Games, the sole copyright holder of the
+   Software.
+
+   "You" means the individual or legal entity in possession of a copy of
+   the Software.
+
+2. Ownership
+
+   The Software is the exclusive property of Licensor. The Software is
+   licensed, not sold. All right, title, and interest in and to the
+   Software, including all intellectual property rights, are and shall
+   remain the sole and exclusive property of Licensor.
+
+3. Restrictions
+
+   You may NOT, without prior written permission from Licensor:
+
+   (a) copy, reproduce, publish, distribute, sublicense, lease, rent,
+       lend, sell, or otherwise transfer the Software, in whole or in
+       part, in any form or by any means;
+
+   (b) modify, adapt, translate, port, or create derivative works based
+       on the Software;
+
+   (c) reverse engineer, decompile, disassemble, or otherwise attempt to
+       discover the source code, algorithms, or non-public components of
+       the Software, except to the extent that such activity is expressly
+       permitted by applicable law notwithstanding this restriction;
+
+   (d) remove, alter, or obscure any copyright, trademark, or other
+       proprietary notice contained in or on the Software;
+
+   (e) use the Software, or any portion thereof, to develop a competing
+       product or service;
+
+   (f) use the name, logo, or trademarks of Licensor to endorse or
+       promote products derived from or incorporating the Software.
+
+4. No Open-Source License
+
+   The Software is closed-source. Nothing in this license grants any
+   rights under any open-source, free-software, or copyleft license
+   (including but not limited to the GNU General Public License, the MIT
+   License, or the Apache License). Public availability of the source
+   code, if any, does not constitute a grant of any open-source license
+   or a waiver of any restriction herein.
+
+5. Third-Party Components
+
+   The Software depends on Raylib, which is distributed under its own
+   license terms. The use of Raylib is governed by the Raylib license,
+   not by this license. The proprietary terms of this license apply only
+   to the original code, shaders, and documentation authored by Romance
+   Games.
+
+6. Confidentiality
+
+   The Software contains trade secrets and confidential information of
+   Licensor. You shall protect the confidentiality of the Software with
+   at least the same degree of care that You use to protect Your own
+   confidential information of like importance, but in no event less than
+   a reasonable degree of care.
+
+7. Termination
+
+   Any breach of this license terminates Your rights under it
+   automatically and immediately, without notice. Upon termination, You
+   must destroy all copies of the Software in Your possession or control.
+
+8. Disclaimer of Warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT,
+   OR THAT THE SOFTWARE WILL OPERATE UNINTERRUPTED OR ERROR-FREE.
+
+9. Limitation of Liability
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL
+   LICENSOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   CONSEQUENTIAL, OR EXEMPLARY DAMAGES (INCLUDING WITHOUT LIMITATION
+   DAMAGES FOR LOSS OF PROFITS, GOODWILL, DATA, OR OTHER INTANGIBLE
+   LOSSES) ARISING OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THIS
+   LICENSE, EVEN IF LICENSOR HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH
+   DAMAGES.
+
+10. Governing Law
+
+    This license shall be governed by and construed in accordance with
+    the laws of the jurisdiction in which Licensor is established,
+    without regard to its conflict-of-law principles.
+
+11. Entire Agreement
+
+    This license constitutes the entire agreement between You and
+    Licensor relating to the Software and supersedes all prior or
+    contemporaneous oral or written communications, proposals, and
+    representations with respect to the Software.
+
+For licensing inquiries, contact Romance Games.
