@@ -18,15 +18,17 @@ and present them with a free-fly camera each frame.
                 |   bsp       |      +-------+-------+
                 +------+------+              |
                        |   (atlas pixels uploaded as Texture2D)
-                       v
-                +-------------+
-                |  mesh (GPU) |   per-surface raylib Mesh + lightmap atlas
-                +------+------+
-                       |
-   game loop --------> | r_draw_mesh(mesh) every frame
-                       |   r_draw_sky(...)
-                       v
-                  OpenGL 3.3
+                        v
+                 +-------------+
+                 |  mesh (GPU) |   opaque + transparent per-surface raylib Meshes
+                 |             |   + lightmap atlas Texture2D
+                 +------+------+
+                        |
+    game loop --------> | r_draw_mesh(mesh, cam_pos) every frame
+                        |   (opaque pass + sorted transparent pass)
+                        |   r_draw_sky(...)
+                        v
+                   OpenGL 3.3
 ```
 
 ## Modules at a glance
@@ -36,8 +38,8 @@ and present them with a free-fly camera each frame.
 | `bsp`      | `bsp.c`, `bsp.h`        | [bsp.md](bsp.md)           | Parse a Quake II BSP file into in-memory lumps.                  |
 | `texture`  | `texture.c`, `texture.h`| [texture.md](texture.md)   | Load a PNG into a raylib `Texture2D` wrapper.                    |
 | `lightmap` | `lightmap.c`, `lightmap.h` | [lightmap.md](lightmap.md) | Compute face extents and pack all face lightmaps into one atlas.|
-| `mesh`     | `mesh.c`, `mesh.h`      | [mesh.md](mesh.md)         | Build GPU meshes grouped by diffuse texture, with dual UV sets.   |
-| `render`   | `render.c`, `render.h`  | [render.md](render.md)     | Bind the lightmap shader, draw world meshes, draw skybox.        |
+| `mesh`     | `mesh.c`, `mesh.h`      | [mesh.md](mesh.md)         | Build opaque+transparent GPU meshes grouped by (texture, alpha).  |
+| `render`   | `render.c`, `render.h`  | [render.md](render.md)     | Bind lightmap shader, two-pass draw (opaque, sorted transparent). |
 | `main`     | `main.c`                | [main.md](main.md)         | Window init, entity scan, camera input, frame loop.              |
 
 ## Coordinate systems
@@ -80,5 +82,9 @@ once at shutdown. The frame loop never allocates GPU memory.
 - The engine targets **OpenGL 3.3 / GLSL 330** through raylib's desktop
   backend.
 - The implementation favors **simplicity over performance**: one
-  surface per unique diffuse texture, one draw call per surface, no
-  visibility culling beyond what the GPU does on the rasteriser.
+  surface per unique (diffuse texture, alpha), one draw call per
+  surface, no visibility culling beyond what the GPU does on the
+  rasteriser.
+- Transparent surfaces (`SURF_TRANS33`, `SURF_TRANS66`) are stored in a
+  separate list and drawn in a second pass with alpha blending, sorted
+  back-to-front by centroid every frame.

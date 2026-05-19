@@ -25,17 +25,23 @@ typedef struct {
     uint32_t     texture_id;    // diffuse GL texture id
     Mesh         rl_mesh;       // raylib GPU mesh
     int          uploaded;
+
+    float        alpha;         // 1.0 opaque, 0.33 TRANS33, 0.66 TRANS66
+    Vector3      centroid;      // mean vertex position (raylib space), for transparency sort
 } mesh_surface;
 
 typedef struct {
-    mesh_surface *surfaces;
+    mesh_surface *surfaces;          // opaque surfaces only
     texture      *textures;
-    uint32_t      surface_count;
+    uint32_t      surface_count;     // opaque count
     uint32_t      texture_count;
 
     Texture2D     lightmap_atlas;
     uint32_t      lightmap_id;
     int           has_lightmap_atlas;
+
+    mesh_surface *trans_surfaces;    // transparent surfaces
+    uint32_t      trans_surface_count;
 } mesh;
 
 mesh *mesh_from_bsp(const bsp_model *bsp);
@@ -52,12 +58,14 @@ sequence:
    no mipmaps), and the resulting `Texture2D` is stored on `mesh`.
 2. **First pass over faces** (tallying): for every face that isn't a
    utility surface (`clip`, `hint`, `sky1`, ...), load or look up the
-   diffuse texture, then find or create a `mesh_surface` for that
-   texture id. The per-surface vertex count is accumulated as
-   `(face.num_edges - 2) * 3` (fan triangulation).
-3. **Allocate per-surface vertex buffers** based on the tally.
+   diffuse texture. If the face's `texinfo.flags` contains
+   `SURF_TRANS33` or `SURF_TRANS66` it is routed to the transparent
+   surface list; otherwise to the opaque list. The per-surface vertex
+   count is accumulated as `(face.num_edges - 2) * 3`.
+3. **Allocate per-surface vertex buffers** based on the two tallies.
 4. **Second pass over faces** (vertex generation): for each face, the
-   module
+   module re-classifies it as opaque or transparent, finds the
+   corresponding surface by `(gl_id, alpha)`, and:
      - fans the face's edge ring into triangles,
      - computes the per-vertex diffuse `(u, v)` from `texinfo` divided
        by the diffuse texture dimensions,
@@ -66,26 +74,28 @@ sequence:
      - applies the BSP-to-raylib coordinate swap `(x, y, z) -> (x, z, -y)`,
      - writes three vertices per triangle into the surface's CPU array
        (winding is reversed compared to BSP order, see below).
-5. **Upload each surface** with `upload_surface_mesh`, which allocates
+5. **Compute centroids** for each transparent surface.
+6. **Upload both lists** with `upload_surface_mesh`, which allocates
    raylib's `Mesh` arrays via `MemAlloc`, fills `vertices`, `texcoords`,
    and `texcoords2`, and calls `UploadMesh`.
-6. **Free the atlas** with `lm_free`. The CPU lightmap pixels are no
+7. **Free the atlas** with `lm_free`. The CPU lightmap pixels are no
    longer needed once the GPU texture exists.
 
 ## Surface grouping
 
 A "surface" in this module is a batch of triangles that share a single
-diffuse texture id. Faces that reference the same diffuse texture end
-up in the same `mesh_surface` regardless of where they are spatially.
-This minimises texture binds at draw time at the cost of losing all
-spatial coherency (which the engine doesn't use anyway, since there's
-no culling).
+diffuse texture id **and** alpha value. Faces that reference the same
+diffuse texture and have the same transparency flag end up in the same
+`mesh_surface` regardless of where they are spatially. This minimises
+texture binds at draw time at the cost of losing all spatial coherency
+(which the engine doesn't use anyway, since there's no culling).
 
-`find_or_create_surface(m, gl_id)` performs the lookup. The mapping
-between a face and its `mesh_surface` is implicit: the face's texinfo
-gives a `texture_name`, the mesh loads that texture via
-`get_or_load_texture`, and the loaded texture's GL id is what
-`find_or_create_surface` keys on.
+For opaque faces the grouping key is `(gl_texture_id, ALPHA_OPAQUE)`.
+For transparent faces the grouping key is `(gl_texture_id, alpha)`,
+where `alpha` is `ALPHA_TRANS33` (0.33) or `ALPHA_TRANS66` (0.66).
+This means `SURF_TRANS33` and `SURF_TRANS66` faces with the same
+texture never share a transparent surface — they need different
+`alpha` uniforms at draw time.
 
 ## Diffuse UV computation
 
@@ -157,7 +167,8 @@ textures reuse the same fallback texture.
 
 ## Cleanup
 
-`mesh_free` walks `m->surfaces` and:
+`mesh_free` iterates the opaque and transparent surface lists (via the
+`free_surface_list` helper) and:
 
 1. Calls `UnloadMesh(s->rl_mesh)` for each uploaded surface to release
    GPU buffers.
@@ -169,3 +180,20 @@ textures reuse the same fallback texture.
 
 The order matters: GPU resources are released before the CPU-side
 arrays that referenced them, so there are no dangling-id concerns.
+
+## Transparent surfaces
+
+Faces whose `texinfo.flags` contain `SURF_TRANS33` or `SURF_TRANS66`
+are routed to `m->trans_surfaces` instead of `m->surfaces`. The alpha
+value (0.33 or 0.66) is stored on `mesh_surface.alpha` and becomes
+the `surfaceAlpha` shader uniform at draw time. Transparent surfaces
+still receive a lightmap and participate in the atlas the same way as
+opaque surfaces.
+
+After vertex generation, the module computes each transparent surface's
+`centroid` (arithmetic mean of all vertex positions in raylib space).
+The render module uses this centroid to sort transparent surfaces
+back-to-front relative to the camera every frame.
+
+The `free_surface_list` helper is used for both the opaque and
+transparent lists in `mesh_free`.
