@@ -204,7 +204,8 @@ void ecs_destroy(ecs_world *w, ecs_entity e) {
 ecs_component_id ecs_register(ecs_world *w,
                               const char *name,
                               uint32_t stride,
-                              ecs_component_dtor dtor) {
+                              ecs_component_dtor dtor,
+                              ecs_component_reader reader) {
     if (w == NULL) {
         printf("ecs_register: w = NULL\n");
         return ECS_MAX_COMPONENTS;
@@ -223,6 +224,7 @@ ecs_component_id ecs_register(ecs_world *w,
     memset(p, 0, sizeof(*p));
     p->stride = stride;
     p->dtor = dtor;
+    p->reader = reader;
     if (name != NULL) {
         size_t n = strlen(name);
         if (n >= sizeof(p->name)) {
@@ -234,6 +236,28 @@ ecs_component_id ecs_register(ecs_world *w,
         p->name[0] = 0;
     }
     return id;
+}
+
+ecs_component_id ecs_lookup(const ecs_world *w, const char *name) {
+    if (w == NULL || name == NULL) {
+        return ECS_MAX_COMPONENTS;
+    }
+    for (uint32_t i = 0; i < w->pool_count; i++) {
+        if (strcmp(w->pools[i].name, name) == 0) {
+            return i;
+        }
+    }
+    return ECS_MAX_COMPONENTS;
+}
+
+ecs_component_reader ecs_pool_reader(const ecs_world *w, ecs_component_id c) {
+    if (w == NULL) {
+        return NULL;
+    }
+    if (c >= w->pool_count) {
+        return NULL;
+    }
+    return w->pools[c].reader;
 }
 
 static int pool_check(const ecs_world *w, ecs_component_id c) {

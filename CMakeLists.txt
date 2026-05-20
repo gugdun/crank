@@ -24,12 +24,14 @@ FetchContent_MakeAvailable(raylib)
 
 add_executable(${PROJECT_NAME}
     src/main.c
+    src/sjson.c
     src/bsp.c
     src/mesh.c
     src/lightmap.c
     src/texture.c
     src/render.c
     src/ecs/ecs.c
+    src/ecs/entity.c
     src/res/res_map.c
     src/res/res_mesh.c
     src/res/res_texture.c

@@ -1,0 +1,21 @@
+{
+    "components": {
+        "c_transform": {
+            "position": [0.0, 0.0, 0.0],
+            "yaw": 0.0,
+            "pitch": 0.0
+        },
+        "c_camera": {
+            "fovy": 90.0,
+            "projection": 0,
+            "active": true
+        },
+        "c_fpcam": {
+            "run_speed": 320.0,
+            "sensitivity": 1.0,
+            "m_yaw": 0.022,
+            "m_pitch": 0.022,
+            "pitch_clamp": 89.0
+        }
+    }
+}

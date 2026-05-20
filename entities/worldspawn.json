@@ -1,0 +1,10 @@
+{
+    "components": {
+        "c_map": {
+            "map": 0
+        },
+        "c_worldspawn": {
+            "sky_prefix": "unit1_"
+        }
+    }
+}

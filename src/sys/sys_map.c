@@ -2,30 +2,57 @@
 
 #include "bsp.h"
 #include "ecs/ecs.h"
+#include "ecs/entity.h"
 #include "mesh.h"
 #include "render.h"
 #include "res/res_map.h"
 #include "res/res_mesh.h"
 #include "res/res_texture.h"
+#include "sjson.h"
 #include "sys/sys_fpcam.h"
-#include "sys/sys_skybox.h"
 #include "raylib.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define DEFAULT_SKY     "unit1_"
-#define SKY_PATH_PREFIX "env/"
+static ecs_component_id g_c_map         = ECS_MAX_COMPONENTS;
+static ecs_component_id g_c_worldspawn  = ECS_MAX_COMPONENTS;
+static ecs_component_id g_c_spawn_point = ECS_MAX_COMPONENTS;
 
-static ecs_component_id g_c_map = ECS_MAX_COMPONENTS;
+static void read_c_map(void *data, sjson_node *node) {
+    (void)node;
+    memset(data, 0, sizeof(c_map));
+}
+
+static void read_c_worldspawn(void *data, sjson_node *node) {
+    c_worldspawn *ws = data;
+    const char *prefix = sjson_get_string(node, "sky_prefix", NULL);
+    if (prefix != NULL) {
+        size_t n = strlen(prefix);
+        if (n >= sizeof(ws->sky_prefix)) {
+            n = sizeof(ws->sky_prefix) - 1;
+        }
+        memcpy(ws->sky_prefix, prefix, n);
+        ws->sky_prefix[n] = '\0';
+    } else {
+        ws->sky_prefix[0] = '\0';
+    }
+}
+
+static void read_c_spawn_point(void *data, sjson_node *node) {
+    c_spawn_point *sp = data;
+    sp->team = sjson_get_int(node, "team", 0);
+}
 
 void sys_map_register(ecs_world *w) {
     if (w == NULL) {
         printf("sys_map_register: w = NULL\n");
         return;
     }
-    g_c_map = ecs_register(w, "c_map", sizeof(c_map), NULL);
+    g_c_map         = ecs_register(w, "c_map",         sizeof(c_map),         NULL, read_c_map);
+    g_c_worldspawn  = ecs_register(w, "c_worldspawn",  sizeof(c_worldspawn),  NULL, read_c_worldspawn);
+    g_c_spawn_point = ecs_register(w, "c_spawn_point", sizeof(c_spawn_point), NULL, read_c_spawn_point);
 }
 
 ecs_entity sys_map_spawn(ecs_world *w, map_handle h) {
@@ -95,136 +122,63 @@ static Vector3 parse_origin(const char *str) {
     return (Vector3){result.x, result.z, -result.y};
 }
 
-static void load_skybox_sides(res_texture_mgr *texmgr,
-                              const char *sky_name,
-                              tex_handle out[6]) {
-    static const char *suffix[6] = {"ft", "dn", "bk", "lf", "rt", "up"};
-
-    size_t prefix_len = strlen(SKY_PATH_PREFIX);
-    size_t name_len = strlen(sky_name);
-    size_t suffix_max = 2; // all suffixes are 2 chars
-    size_t path_size = prefix_len + name_len + suffix_max + 1;
-
-    char *path = calloc(1, path_size);
-    if (path == NULL) {
-        printf("load_skybox_sides: failed to allocate path\n");
-        for (int i = 0; i < 6; i++) out[i] = 0;
-        return;
+int sys_map_process_entities(ecs_world *w,
+                              const bsp_model *bsp,
+                              sjson_context *sctx) {
+    if (w == NULL || bsp == NULL || sctx == NULL) {
+        printf("sys_map_process_entities: invalid arguments\n");
+        return -1;
     }
 
-    for (int i = 0; i < 6; i++) {
-        snprintf(path, path_size, "%s%s%s", SKY_PATH_PREFIX, sky_name, suffix[i]);
-        out[i] = res_texture_load(texmgr, path);
-
-        // Original code clamps wrap mode on skybox textures.
-        const texture *t = res_texture_get(texmgr, out[i]);
-        if (t != NULL) {
-            SetTextureWrap(t->rl_texture, TEXTURE_WRAP_CLAMP);
-        }
-    }
-
-    free(path);
-}
-
-void sys_map_apply_spawn(ecs_world *w,
-                         ecs_entity map_entity,
-                         ecs_entity fpcam_entity,
-                         ecs_entity skybox_entity,
-                         res_texture_mgr *texmgr,
-                         res_map_mgr *mapmgr) {
-    if (w == NULL || mapmgr == NULL || texmgr == NULL) {
-        printf("sys_map_apply_spawn: invalid arguments\n");
-        return;
-    }
-
-    c_map *cm = ecs_get(w, map_entity, g_c_map);
-    if (cm == NULL) {
-        printf("sys_map_apply_spawn: map entity %u has no c_map\n", map_entity);
-        return;
-    }
-
-    map_view view = {0};
-    if (!res_map_get(mapmgr, cm->map, &view)) {
-        printf("sys_map_apply_spawn: invalid map handle %u\n", cm->map);
-        return;
-    }
-    if (view.bsp == NULL) {
-        printf("sys_map_apply_spawn: bsp is NULL\n");
-        return;
-    }
-
-    const bsp_model *bsp = view.bsp;
-
-    size_t sky_cap = strlen(DEFAULT_SKY) + 1;
-    char *sky_name = calloc(1, sky_cap);
-    if (sky_name == NULL) {
-        printf("sys_map_apply_spawn: failed to allocate sky_name\n");
-        return;
-    }
-    memcpy(sky_name, DEFAULT_SKY, sky_cap);
+    int spawned = 0;
+    ecs_component_id c_transform_id = ecs_lookup(w, "c_transform");
 
     for (uint32_t i = 0; i < bsp->num_entities; i++) {
-        const bsp_entity *e = &bsp->entities[i];
-        const char *classname = bsp_entity_get(e, "classname");
+        const bsp_entity *be = &bsp->entities[i];
+        const char *classname = bsp_entity_get(be, "classname");
         if (classname == NULL) {
             continue;
         }
 
-        if (strcmp(classname, "worldspawn") == 0) {
-            const char *sky_str = bsp_entity_get(e, "sky");
-            if (sky_str != NULL) {
-                printf("{\n\"classname\" \"%s\"\n\"sky\" \"%s\"\n}\n", classname, sky_str);
-                size_t new_len = strlen(sky_str) + 1;
-                char *grown = realloc(sky_name, new_len);
-                if (grown == NULL) {
-                    printf("sys_map_apply_spawn: failed to grow sky_name\n");
-                    continue;
-                }
-                sky_name = grown;
-                memcpy(sky_name, sky_str, new_len);
-            }
-        } else if (strcmp(classname, "info_player_start") == 0) {
-            if (fpcam_entity == ECS_INVALID) {
-                continue;
-            }
-            const char *origin_str = bsp_entity_get(e, "origin");
-            if (origin_str != NULL) {
-                printf("{\n\"classname\" \"%s\"\n\"origin\" \"%s\"\n", classname, origin_str);
-                Vector3 pos = parse_origin(origin_str);
-                sys_fpcam_set_position(w, fpcam_entity, pos);
-            }
-
-            const char *angle_str = bsp_entity_get(e, "angle");
-            if (angle_str != NULL) {
-                printf("\"angle\" \"%s\"\n", angle_str);
-                float angle = strtof(angle_str, NULL);
-                sys_fpcam_set_yaw(w, fpcam_entity, angle);
-            }
-            puts("}\n");
+        // Build path: entities/<classname>.json
+        char path[256];
+        int n = snprintf(path, sizeof(path), "entities/%s.json", classname);
+        if (n < 0 || (size_t)n >= sizeof(path)) {
+            printf("sys_map_process_entities: path too long for '%s'\n", classname);
+            continue;
         }
+
+        ecs_entity e = entity_spawn_from_file(w, sctx, path);
+        if (e == ECS_INVALID) {
+            // No JSON archetype for this classname; silently skip.
+            continue;
+        }
+
+        // Apply BSP origin/angle overrides to c_transform when present.
+        if (c_transform_id < ECS_MAX_COMPONENTS) {
+            c_transform *t = ecs_get(w, e, c_transform_id);
+            if (t != NULL) {
+                const char *origin = bsp_entity_get(be, "origin");
+                if (origin != NULL) {
+                    t->position = parse_origin(origin);
+                }
+                const char *angle = bsp_entity_get(be, "angle");
+                if (angle != NULL) {
+                    t->yaw = strtof(angle, NULL);
+                }
+            }
+        }
+
+        spawned++;
     }
 
-    if (skybox_entity != ECS_INVALID) {
-        tex_handle sides[6] = {0};
-        load_skybox_sides(texmgr, sky_name, sides);
-        // suffix order in load_skybox_sides is {ft, dn, bk, lf, rt, up}
-        sys_skybox_set_sides(w,
-                             skybox_entity,
-                             sides[0], // ft
-                             sides[2], // bk
-                             sides[3], // lf
-                             sides[4], // rt
-                             sides[5], // up
-                             sides[1]);// dn
-    }
-
-    free(sky_name);
+    return spawned;
 }
 
 void sys_map_render(ecs_world *w,
-                    res_map_mgr *mapmgr,
-                    res_mesh_mgr *meshmgr,
-                    Vector3 cam_pos) {
+                     res_map_mgr *mapmgr,
+                     res_mesh_mgr *meshmgr,
+                     Vector3 cam_pos) {
     if (w == NULL || mapmgr == NULL || meshmgr == NULL) {
         return;
     }

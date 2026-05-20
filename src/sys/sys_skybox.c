@@ -3,18 +3,26 @@
 #include "ecs/ecs.h"
 #include "render.h"
 #include "res/res_texture.h"
+#include "sjson.h"
 #include "texture.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static ecs_component_id g_c_skybox = ECS_MAX_COMPONENTS;
+
+static void read_c_skybox(void *data, sjson_node *node) {
+    c_skybox *s = data;
+    memset(s, 0, sizeof(*s));
+    s->size = sjson_get_float(node, "size", 4096.0f);
+}
 
 void sys_skybox_register(ecs_world *w) {
     if (w == NULL) {
         printf("sys_skybox_register: w = NULL\n");
         return;
     }
-    g_c_skybox = ecs_register(w, "c_skybox", sizeof(c_skybox), NULL);
+    g_c_skybox = ecs_register(w, "c_skybox", sizeof(c_skybox), NULL, read_c_skybox);
 }
 
 ecs_entity sys_skybox_spawn(ecs_world *w) {

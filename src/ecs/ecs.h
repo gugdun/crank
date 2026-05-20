@@ -12,6 +12,11 @@ typedef uint32_t ecs_component_id;
 
 typedef void (*ecs_component_dtor)(void *component_data);
 
+// Forward declaration so the ECS header does not depend on sjson.h.
+struct sjson_node;
+typedef void (*ecs_component_reader)(void *component_data,
+                                      struct sjson_node *node);
+
 typedef struct {
     uint8_t  *dense;             // packed component bytes
     uint32_t *dense_to_entity;   // dense[i] belongs to dense_to_entity[i]
@@ -21,6 +26,7 @@ typedef struct {
     uint32_t  stride;
     uint32_t  sparse_capacity;
     ecs_component_dtor dtor;
+    ecs_component_reader reader;
     char      name[32];
 } ecs_pool;
 
@@ -50,7 +56,15 @@ int        ecs_alive(const ecs_world *w, ecs_entity e);
 ecs_component_id ecs_register(ecs_world *w,
                               const char *name,
                               uint32_t stride,
-                              ecs_component_dtor dtor);
+                              ecs_component_dtor dtor,
+                              ecs_component_reader reader);
+
+// Look up a registered component by its name string.
+// Returns the component id, or ECS_MAX_COMPONENTS if not found.
+ecs_component_id ecs_lookup(const ecs_world *w, const char *name);
+
+// Return the registered reader for a component, or NULL if none.
+ecs_component_reader ecs_pool_reader(const ecs_world *w, ecs_component_id c);
 
 void *ecs_add(ecs_world *w, ecs_entity e, ecs_component_id c);
 void *ecs_set(ecs_world *w, ecs_entity e, ecs_component_id c, const void *src);

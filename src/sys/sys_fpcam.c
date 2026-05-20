@@ -3,6 +3,7 @@
 #include "ecs/ecs.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "sjson.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,14 +12,37 @@ static ecs_component_id g_c_transform = ECS_MAX_COMPONENTS;
 static ecs_component_id g_c_camera    = ECS_MAX_COMPONENTS;
 static ecs_component_id g_c_fpcam     = ECS_MAX_COMPONENTS;
 
+static void read_c_transform(void *data, sjson_node *node) {
+    c_transform *t = data;
+    sjson_get_floats((float *)&t->position, 3, node, "position");
+    t->yaw   = sjson_get_float(node, "yaw", 0.0f);
+    t->pitch = sjson_get_float(node, "pitch", 0.0f);
+}
+
+static void read_c_camera(void *data, sjson_node *node) {
+    c_camera *cam = data;
+    cam->fovy = sjson_get_float(node, "fovy", 90.0f);
+    cam->projection = sjson_get_int(node, "projection", CAMERA_PERSPECTIVE);
+    cam->active = sjson_get_bool(node, "active", true);
+}
+
+static void read_c_fpcam(void *data, sjson_node *node) {
+    c_fpcam *fp = data;
+    fp->run_speed   = sjson_get_float(node, "run_speed", 320.0f);
+    fp->sensitivity = sjson_get_float(node, "sensitivity", 1.0f);
+    fp->m_yaw       = sjson_get_float(node, "m_yaw", 0.022f);
+    fp->m_pitch     = sjson_get_float(node, "m_pitch", 0.022f);
+    fp->pitch_clamp = sjson_get_float(node, "pitch_clamp", 89.0f);
+}
+
 void sys_fpcam_register(ecs_world *w) {
     if (w == NULL) {
         printf("sys_fpcam_register: w = NULL\n");
         return;
     }
-    g_c_transform = ecs_register(w, "c_transform", sizeof(c_transform), NULL);
-    g_c_camera    = ecs_register(w, "c_camera",    sizeof(c_camera),    NULL);
-    g_c_fpcam     = ecs_register(w, "c_fpcam",     sizeof(c_fpcam),     NULL);
+    g_c_transform = ecs_register(w, "c_transform", sizeof(c_transform), NULL, read_c_transform);
+    g_c_camera    = ecs_register(w, "c_camera",    sizeof(c_camera),    NULL, read_c_camera);
+    g_c_fpcam     = ecs_register(w, "c_fpcam",     sizeof(c_fpcam),     NULL, read_c_fpcam);
 }
 
 static void apply_transform_to_camera(const c_transform *t, c_camera *cam) {
