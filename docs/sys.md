@@ -1,10 +1,10 @@
 # systems
 
-The `sys_*` modules implement the three feature behaviors of the
-engine: the BSP-based world, the skybox, and the first-person camera.
-Each system module owns one or more component types and a small set of
-public functions: `register`, `spawn`, and one or more update/render
-entry points. Systems are dispatched in a fixed order from `main`.
+The `sys_*` modules implement the engine's behaviors: the BSP-based world,
+the skybox, and the first-person camera. Each system module owns one or
+more component types and a small set of public functions:
+`register`, `spawn`, and one or more update/render entry points.
+Systems are dispatched in a fixed order from `main`.
 
 ## Files
 
@@ -40,6 +40,12 @@ typedef struct {
     float pitch_clamp;      // |pitch| max; default 89
 } c_fpcam;
 ```
+
+Each component has a registered `ecs_component_reader` so entities can be
+constructed from JSON. `c_transform` fields are `position [x,y,z]`, `yaw`,
+and `pitch`. `c_camera` fields are `fovy`, `projection`, and `active`.
+`c_fpcam` fields are `run_speed`, `sensitivity`, `m_yaw`, `m_pitch`, and
+`pitch_clamp`.
 
 ### API
 
@@ -83,6 +89,10 @@ typedef struct {
 } c_skybox;
 ```
 
+`c_skybox` has a registered reader that initialises `size` from JSON.
+The six texture handles are always zeroed by the reader; they are
+filled in later by `sys_skybox_set_sides`.
+
 ### API
 
 ```c
@@ -98,7 +108,7 @@ void       sys_skybox_render(ecs_world *w,
 ```
 
 `sys_skybox_spawn` creates an entity with zeroed handles. Sides are
-filled in later (typically by `sys_map_apply_spawn`).
+filled in later (typically by `main.c` after reading the BSP worldspawn).
 
 `sys_skybox_render` resolves each `tex_handle` to an OpenGL id via
 `res_texture_get` and calls `r_draw_sky`. If any side is missing the
@@ -106,48 +116,57 @@ skybox is skipped silently.
 
 ## sys_map — BSP world
 
-### Component
+### Components
 
 ```c
 typedef struct {
     map_handle map;
 } c_map;
+
+typedef struct {
+    char sky_prefix[32];
+} c_worldspawn;
+
+typedef struct {
+    int team;
+} c_spawn_point;
 ```
+
+`c_map` stores the runtime map handle. `c_worldspawn` stores the default
+sky texture prefix (overridden by the BSP worldspawn entity at load time).
+`c_spawn_point` marks an entity as a player respawn location.
+
+All three components have registered JSON readers. `c_map` is zeroed.
+`c_worldspawn` reads `sky_prefix`. `c_spawn_point` reads `team`.
 
 ### API
 
 ```c
 void       sys_map_register(ecs_world *w);
 ecs_entity sys_map_spawn(ecs_world *w, map_handle h);
-void       sys_map_apply_spawn(ecs_world *w,
-                               ecs_entity map_entity,
-                               ecs_entity fpcam_entity,
-                               ecs_entity skybox_entity,
-                               res_texture_mgr *texmgr,
-                               res_map_mgr *mapmgr);
+int        sys_map_process_entities(ecs_world *w,
+                                      const bsp_model *bsp,
+                                      sjson_context *sctx);
 void       sys_map_render(ecs_world *w,
                           res_map_mgr *mapmgr,
                           res_mesh_mgr *meshmgr,
                           Vector3 cam_pos);
 ```
 
-`sys_map_apply_spawn` reads the BSP entity lump (the same data
-previously parsed inline in the old `main.c`) and applies it to other
-entities:
+`sys_map_spawn` is a convenience function for engine-internal map
+entities. It creates an entity with `c_map` and sets the handle.
 
-- `worldspawn.sky` is read, defaulting to `unit1_`. Six PNGs are loaded
-  via `res_texture_load` with paths `env/<sky><suffix>` for
-  `suffix in {ft, dn, bk, lf, rt, up}`. Each side's wrap mode is set to
-  `TEXTURE_WRAP_CLAMP` (matching the original behavior). The resulting
-  handles are written to the skybox entity via `sys_skybox_set_sides`.
-- `info_player_start.origin` is parsed by the file-static
-  `parse_origin` (3 floats, `(x, z, -y)` swap) and written to the fpcam
-  entity via `sys_fpcam_set_position`.
-- `info_player_start.angle` is read as degrees and written via
-  `sys_fpcam_set_yaw`.
+`sys_map_process_entities` is the generic BSP-to-JSON entity spawner.
+For every entity in the BSP lump it:
 
-If either `fpcam_entity` or `skybox_entity` is `ECS_INVALID`, the
-corresponding step is skipped.
+1. Builds the path `entities/<classname>.json`.
+2. Parses the JSON archetype and spawns an ECS entity.
+3. Applies BSP `origin` and `angle` overrides to the entity's
+   `c_transform` component (if present).
+
+If no JSON file exists for a given `classname`, that entity is silently
+skipped. This makes the engine automatically support any BSP entity type
+as long as a matching JSON archetype is provided.
 
 `sys_map_render` iterates every `c_map`, resolves its mesh via
 `mapmgr -> meshmgr`, and calls `r_draw_mesh` per entity. Multiple map

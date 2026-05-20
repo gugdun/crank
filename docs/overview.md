@@ -30,10 +30,16 @@ and present them with the camera each frame.
          v                                                       |  sys_fpcam    |
    bsp_model / mesh / texture                                    |  sys_skybox   |
    (low-level modules unchanged)                                 |  sys_map      |
-                                                                 +-------+-------+
-                                                                         |
-                                                                         v
-                                                                   r_draw_* (raylib/GL)
+                                                                  +-------+-------+
+                                                                          |
+                                                                          v
+                                                                    r_draw_* (raylib/GL)
+
++----------------------------------------------------------------+
+| entity factory (entity.c)                                      |
+|  - parses JSON archetypes from entities/<classname>.json         |
+|  - spawns ECS entities with registered component readers        |
++----------------------------------------------------------------+
 ```
 
 - **Low-level modules** (`bsp`, `mesh`, `lightmap`, `texture`,
@@ -61,7 +67,8 @@ and present them with the camera each frame.
 | `res_map`    | `res/res_map.c`, `res/res_map.h`             | [res.md](res.md)             | Load BSP + build mesh, expose `map_handle` views.               |
 | `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | First-person camera: transform/camera/fpcam components.         |
 | `sys_skybox` | `sys/sys_skybox.c`, `sys/sys_skybox.h`       | [sys.md](sys.md)             | Skybox component + render.                                      |
-| `sys_map`    | `sys/sys_map.c`, `sys/sys_map.h`             | [sys.md](sys.md)             | Map component + render + entity-driven spawn parsing.           |
+| `sys_map`    | `sys/sys_map.c`, `sys/sys_map.h`             | [sys.md](sys.md)             | Map component + render + generic BSP entity spawner.            |
+| `entity`     | `ecs/entity.c`, `ecs/entity.h`               | (see ecs.md)                | JSON archetype parser / ECS entity factory.                   |
 | `main`       | `main.c`                                     | [main.md](main.md)           | Window init, manager + world setup, frame loop dispatch.        |
 
 ## Coordinate systems
@@ -86,8 +93,12 @@ InitWindow
 r_init
 res_texture_create / res_mesh_create / res_map_create
 ecs_world_create + sys_*_register
-res_map_load + sys_*_spawn
+sjson_create_context
+res_map_load
+sys_map_process_entities (spawns from JSON)
+post-process: attach map handle, load sky textures, spawn player
 ... per-frame: sys_fpcam_update + sys_*_render ...
+sjson_destroy_context
 ecs_world_destroy
 res_map_destroy
 res_mesh_destroy

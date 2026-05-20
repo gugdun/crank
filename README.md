@@ -25,6 +25,7 @@ crank/
   maps/             *.bsp map files                          (create manually)
   textures/         Diffuse textures as *.png                (create manually)
   env/              Skybox textures as *.png                 (create manually)
+  entities/         JSON entity archetypes (*.json)          (create manually)
   CMakeLists.txt
   README.md
   AGENTS.md
@@ -46,6 +47,12 @@ before running the engine:
   named `<skyname><suffix>.png` where suffix is one of `ft`, `bk`, `lf`,
   `rt`, `up`, `dn`. The sky name is read from the `worldspawn` entity's
   `sky` key, defaulting to `unit1_`.
+- **`entities/`** — Place JSON entity archetype files here. Each file is
+  named `<classname>.json` and defines the components that make up that
+  entity type (e.g. `entities/player.json`, `entities/worldspawn.json`).
+  When a map is loaded, every entity in the BSP entity lump is matched
+  to a JSON file by its `classname` and spawned into the ECS world.
+  See the sample JSON files shipped with the repo for the expected format.
 
 The `shaders/` directory IS in the repository and is copied next to the
 executable automatically by the CMake build.

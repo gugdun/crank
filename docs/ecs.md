@@ -19,6 +19,9 @@ typedef uint32_t ecs_entity;
 typedef uint32_t ecs_component_id;
 typedef void (*ecs_component_dtor)(void *component_data);
 
+typedef void (*ecs_component_reader)(void *component_data,
+                                      struct sjson_node *node);
+
 typedef struct ecs_world ecs_world;
 typedef struct ecs_iter {
     const ecs_world *world;
@@ -65,7 +68,8 @@ marks `e` dead.
 ecs_component_id ecs_register(ecs_world *w,
                               const char *name,
                               uint32_t stride,
-                              ecs_component_dtor dtor /* may be NULL */);
+                              ecs_component_dtor dtor,      /* may be NULL */
+                              ecs_component_reader reader); /* may be NULL */
 
 void *ecs_add(ecs_world *w, ecs_entity e, ecs_component_id c);
 void *ecs_set(ecs_world *w, ecs_entity e, ecs_component_id c,
@@ -73,6 +77,9 @@ void *ecs_set(ecs_world *w, ecs_entity e, ecs_component_id c,
 void *ecs_get(const ecs_world *w, ecs_entity e, ecs_component_id c);
 int   ecs_has(const ecs_world *w, ecs_entity e, ecs_component_id c);
 void  ecs_remove(ecs_world *w, ecs_entity e, ecs_component_id c);
+
+ecs_component_id ecs_lookup(const ecs_world *w, const char *name);
+ecs_component_reader ecs_pool_reader(const ecs_world *w, ecs_component_id c);
 ```
 
 `ecs_add` returns a zeroed slot; the caller fills it in. `ecs_set`
@@ -113,6 +120,9 @@ iteration over a single component.
   file-scope `static` variable of the system module.
 - Initialize it from a public `sys_xxx_register(ecs_world *)` function
   that `main` calls before any `sys_xxx_spawn`.
+- If a component type should be populated from JSON entity definitions,
+  pass an `ecs_component_reader` as the 5th argument to `ecs_register`.
+  The reader lives in the same system module as the component.
 - Components must be POD. If a component needs to own heap memory or
   GPU resources, register a `dtor` and clean it up there.
 - Never store pointers into pool storage across calls that mutate the
