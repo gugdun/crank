@@ -169,6 +169,24 @@ int sys_map_process_entities(ecs_world *w,
             }
         }
 
+        // Copy BSP targetname into c_spawn_point so spawn selection can
+        // prefer untargeted info_player_start entities.
+        ecs_component_id c_spawn_point_id = ecs_lookup(w, "c_spawn_point");
+        if (c_spawn_point_id < ECS_MAX_COMPONENTS) {
+            c_spawn_point *sp = ecs_get(w, e, c_spawn_point_id);
+            if (sp != NULL) {
+                const char *targetname = bsp_entity_get(be, "targetname");
+                if (targetname != NULL) {
+                    size_t n = strlen(targetname);
+                    if (n >= sizeof(sp->targetname)) {
+                        n = sizeof(sp->targetname) - 1;
+                    }
+                    memcpy(sp->targetname, targetname, n);
+                    sp->targetname[n] = '\0';
+                }
+            }
+        }
+
         spawned++;
     }
 

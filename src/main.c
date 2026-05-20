@@ -215,19 +215,35 @@ int main(int argc, char *argv[]) {
         player_e = sys_fpcam_spawn(world, (Vector3){0.0f, 0.0f, 0.0f}, 0.0f);
     }
 
-    // Place player at the first spawn point.
+    // Place player at the first untargeted spawn point, or fall back to
+    // any spawn point if every one has a targetname.
     {
         ecs_component_id c_spawn_point_id = ecs_lookup(world, "c_spawn_point");
         ecs_component_id c_transform_id = ecs_lookup(world, "c_transform");
         ecs_iter it = ecs_query(world, c_spawn_point_id);
         ecs_entity e;
         void *data;
+        c_transform chosen = {0};
+        int found = 0;
         while (ecs_iter_next(&it, &e, &data)) {
+            c_spawn_point *sp = (c_spawn_point *)data;
             c_transform *st = ecs_get(world, e, c_transform_id);
+            if (st != NULL) {
+                if (sp->targetname[0] == '\0') {
+                    chosen = *st;
+                    found = 1;
+                    break;
+                }
+                if (!found) {
+                    chosen = *st;
+                    found = 1;
+                }
+            }
+        }
+        if (found) {
             c_transform *pt = ecs_get(world, player_e, c_transform_id);
-            if (st != NULL && pt != NULL) {
-                *pt = *st;
-                break;
+            if (pt != NULL) {
+                *pt = chosen;
             }
         }
     }

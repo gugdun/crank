@@ -19,6 +19,7 @@ typedef struct {
 
 typedef struct {
     int team;
+    char targetname[64];
 } c_spawn_point;
 
 void       sys_map_register(ecs_world *w);

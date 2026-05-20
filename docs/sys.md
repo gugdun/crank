@@ -128,7 +128,8 @@ typedef struct {
 } c_worldspawn;
 
 typedef struct {
-    int team;
+    int  team;
+    char targetname[64];
 } c_spawn_point;
 ```
 
@@ -138,6 +139,11 @@ sky texture prefix (overridden by the BSP worldspawn entity at load time).
 
 All three components have registered JSON readers. `c_map` is zeroed.
 `c_worldspawn` reads `sky_prefix`. `c_spawn_point` reads `team`.
+
+`targetname` is populated by `sys_map_process_entities` from the BSP
+entity lump. The player spawn logic in `main` prefers spawn points whose
+`targetname` is empty, because Quake II `info_player_start` entities with
+a `targetname` are teleport destinations rather than normal spawn points.
 
 ### API
 
