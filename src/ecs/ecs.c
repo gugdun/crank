@@ -7,6 +7,12 @@
 #define INITIAL_ALIVE_CAP   64u
 #define INITIAL_POOL_CAP    8u
 
+// Sentinel for "entity not present in this pool". Stored in ecs_pool.sparse[e].
+// Must differ from every valid dense index. ECS_INVALID is 0u and is used as
+// the invalid-entity id, but 0u is also a valid dense index (the first slot),
+// so we use a distinct sentinel here.
+#define POOL_SLOT_EMPTY  ((uint32_t) UINT32_MAX)
+
 static int ensure_alive_capacity(ecs_world *w, uint32_t needed) {
     if (needed <= w->alive_capacity) {
         return 1;
@@ -46,7 +52,7 @@ static int ensure_sparse_capacity(ecs_pool *p, uint32_t needed) {
     }
 
     for (uint32_t i = p->sparse_capacity; i < new_cap; i++) {
-        grown[i] = ECS_INVALID;
+        grown[i] = POOL_SLOT_EMPTY;
     }
     p->sparse = grown;
     p->sparse_capacity = new_cap;
@@ -152,7 +158,7 @@ static void pool_remove_internal(ecs_pool *p, ecs_entity e) {
         return;
     }
     uint32_t dense_idx = p->sparse[e];
-    if (dense_idx == ECS_INVALID) {
+    if (dense_idx == POOL_SLOT_EMPTY) {
         return;
     }
 
@@ -171,7 +177,7 @@ static void pool_remove_internal(ecs_pool *p, ecs_entity e) {
         p->sparse[moved_entity] = dense_idx;
     }
 
-    p->sparse[e] = ECS_INVALID;
+    p->sparse[e] = POOL_SLOT_EMPTY;
     p->count = last;
 }
 
@@ -257,7 +263,7 @@ void *ecs_add(ecs_world *w, ecs_entity e, ecs_component_id c) {
     }
 
     uint32_t existing = p->sparse[e];
-    if (existing != ECS_INVALID) {
+    if (existing != POOL_SLOT_EMPTY) {
         // Already present; zero and return
         void *slot = p->dense + (size_t) existing * p->stride;
         memset(slot, 0, p->stride);
@@ -303,7 +309,7 @@ void *ecs_get(const ecs_world *w, ecs_entity e, ecs_component_id c) {
         return NULL;
     }
     uint32_t idx = p->sparse[e];
-    if (idx == ECS_INVALID) {
+    if (idx == POOL_SLOT_EMPTY) {
         return NULL;
     }
     return p->dense + (size_t) idx * p->stride;

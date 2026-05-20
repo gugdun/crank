@@ -99,8 +99,10 @@ Each `ecs_pool` is a classic sparse set:
   walks `dense[0..count)` in insertion order (mutated by swap-and-pop on
   removal).
 - `dense_to_entity[i]` maps `dense[i]` back to its owning entity.
-- `sparse[entity_id]` is the dense index for that entity, or
-  `ECS_INVALID`.
+- `sparse[entity_id]` is the dense index for that entity, or an
+  internal `POOL_SLOT_EMPTY` sentinel (`UINT32_MAX`) when the entity is
+  not in the pool. The sentinel is distinct from `ECS_INVALID` (`0`)
+  because dense index `0` is a valid slot.
 
 This gives `O(1)` `add`/`get`/`remove` and `O(N)` cache-friendly
 iteration over a single component.
