@@ -203,7 +203,7 @@ void r_draw_sky(Vector3 cam_pos, uint32_t bk, uint32_t dn, uint32_t ft, uint32_t
     rlPushMatrix();
     rlTranslatef(cam_pos.x, cam_pos.y, cam_pos.z);
 
-    rlSetTexture(ft);
+    rlSetTexture(bk);
     rlBegin(RL_TRIANGLES);
     rlColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     rlTexCoord2f(0.0f, 0.0f); rlVertex3f( s,  s,  s);
@@ -214,7 +214,7 @@ void r_draw_sky(Vector3 cam_pos, uint32_t bk, uint32_t dn, uint32_t ft, uint32_t
     rlTexCoord2f(0.0f, 1.0f); rlVertex3f( s, -s,  s);
     rlEnd();
 
-    rlSetTexture(bk);
+    rlSetTexture(ft);
     rlBegin(RL_TRIANGLES);
     rlColor4f(1.0f, 1.0f, 1.0f, 1.0f);
     rlTexCoord2f(0.0f, 0.0f); rlVertex3f(-s,  s, -s);

@@ -175,7 +175,7 @@ void sys_fpcam_update(ecs_world *w, float dt) {
         Vector3 world_up = { 0.0f, 1.0f, 0.0f };
 
         float move_fwd = ((float)forward - (float)backward) * fp->run_speed * dt;
-        float move_rt  = ((float)right   - (float)left)     * fp->run_speed * dt;
+        float move_rt  = ((float)left    - (float)right)    * fp->run_speed * dt;
         float move_up  = ((float)up      - (float)down)     * fp->run_speed * dt;
 
         t->position = Vector3Add(t->position, Vector3Scale(fwd_xz,  move_fwd));
