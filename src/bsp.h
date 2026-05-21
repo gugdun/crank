@@ -130,6 +130,15 @@ typedef struct {
 } bsp_entity;
 
 typedef struct {
+    point3f bbox_min;
+    point3f bbox_max;
+    point3f origin;
+    int32_t head_node;
+    int32_t first_face;
+    int32_t num_faces;
+} __attribute__((packed)) bsp_model_lump;
+
+typedef struct {
     bsp_header header;
 
     point3f *vertices;
@@ -140,6 +149,13 @@ typedef struct {
     bsp_entity *entities;
     uint8_t *lightmaps;
 
+    bsp_plane *planes;
+    bsp_node *nodes;
+    bsp_leaf *leaves;
+    uint16_t *leaf_faces;
+    bsp_model_lump *models;
+    uint8_t *visibility;
+
     uint32_t num_vertices;
     uint32_t num_edges;
     uint32_t num_face_edges;
@@ -147,10 +163,27 @@ typedef struct {
     uint32_t num_texinfo;
     uint32_t num_entities;
     uint32_t lightmaps_size;
+
+    uint32_t num_planes;
+    uint32_t num_nodes;
+    uint32_t num_leaves;
+    uint32_t num_leaf_faces;
+    uint32_t num_models;
+    uint32_t visibility_size;
+    uint32_t num_clusters;
 } bsp_model;
 
 const char *bsp_entity_get(const bsp_entity *e, const char *key);
 bsp_model *bsp_load(const char *path);
 void bsp_free(bsp_model *bsp);
+
+// Decompress the PVS bit vector for `cluster` into `out`.
+// `out` must have at least ((num_clusters + 7) / 8) bytes.
+// Returns 1 on success; 0 if there is no visibility data or cluster is invalid.
+int bsp_decompress_pvs(const bsp_model *bsp, int32_t cluster, uint8_t *out);
+
+// Walk the BSP tree to find the leaf containing `point` (in BSP space).
+// Returns leaf index or -1 if the BSP has no nodes/leaves.
+int32_t bsp_find_leaf(const bsp_model *bsp, point3f point);
 
 #endif

@@ -30,6 +30,7 @@ add_executable(${PROJECT_NAME}
     src/lightmap.c
     src/texture.c
     src/render.c
+    src/vis.c
     src/ecs/ecs.c
     src/ecs/entity.c
     src/res/res_map.c

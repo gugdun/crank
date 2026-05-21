@@ -154,22 +154,13 @@ static int find_or_create_surface_in(mesh_surface **list, uint32_t *count,
 
     *list = grown;
     mesh_surface *s = &(*list)[*count];
-    s->vertices = NULL;
-    s->vertex_count = 0;
+    memset(s, 0, sizeof(*s));
     s->texture_id = gl_texture_id;
-    memset(&s->rl_mesh, 0, sizeof(s->rl_mesh));
-    s->uploaded = 0;
     s->alpha = alpha;
-    s->centroid = (Vector3){0};
 
     int index = (int) *count;
     *count += 1;
     return index;
-}
-
-static int find_or_create_surface(mesh *m, uint32_t gl_texture_id) {
-    return find_or_create_surface_in(&m->surfaces, &m->surface_count,
-                                     gl_texture_id, ALPHA_OPAQUE);
 }
 
 static int find_surface_by_id_alpha(const mesh_surface *list, uint32_t count,
@@ -224,8 +215,6 @@ static void compute_lightmap_uv(const bsp_texinfo *ti,
                                 int atlas_w, int atlas_h,
                                 float *lu, float *lv) {
     if (!info->has_lightmap) {
-        // White tile at (0,0), 1x1, with 1-luxel-padded surroundings.
-        // Sample at the center of the white tile.
         *lu = 0.5f / (float) atlas_w;
         *lv = 0.5f / (float) atlas_h;
         return;
@@ -234,13 +223,9 @@ static void compute_lightmap_uv(const bsp_texinfo *ti,
     float s = p->x * ti->u_axis.x + p->y * ti->u_axis.y + p->z * ti->u_axis.z + ti->u_offset;
     float t = p->x * ti->v_axis.x + p->y * ti->v_axis.y + p->z * ti->v_axis.z + ti->v_offset;
 
-    // In Quake II, luxel (i,j) is centered at world (s_min + i*16, t_min + j*16).
-    // So the float luxel index for an arbitrary point is:
     float lx = (s - info->s_min) / 16.0f;
     float ly = (t - info->t_min) / 16.0f;
 
-    // Luxel index 0 corresponds to atlas texel at (info->atlas_x, info->atlas_y),
-    // whose CENTER (where GL_LINEAR samples cleanly) is at (atlas_x + 0.5, atlas_y + 0.5).
     float atlas_px = (float) info->atlas_x + lx + 0.5f;
     float atlas_py = (float) info->atlas_y + ly + 0.5f;
 
@@ -248,21 +233,25 @@ static void compute_lightmap_uv(const bsp_texinfo *ti,
     *lv = atlas_py / (float) atlas_h;
 }
 
-static void upload_surface_mesh(mesh_surface *s) {
-    if (s->vertex_count == 0 || s->vertices == NULL) return;
+// Upload the world vertex buffer as a single raylib Mesh.
+// We populate positions, texcoords, and texcoords2; raylib will create one
+// VAO and three VBOs. The visibility system supplies a per-bucket IBO at
+// draw time via rlgl, so we do not populate Mesh.indices.
+static void upload_shared_mesh(mesh *m) {
+    if (m->vertex_count == 0 || m->vertices == NULL) return;
 
-    Mesh *rm = &s->rl_mesh;
+    Mesh *rm = &m->rl_mesh;
     memset(rm, 0, sizeof(*rm));
 
-    rm->vertexCount = (int) s->vertex_count;
-    rm->triangleCount = (int) (s->vertex_count / 3);
+    rm->vertexCount = (int) m->vertex_count;
+    rm->triangleCount = 0; // Drawing happens via per-bucket IBOs.
 
-    rm->vertices = (float *) MemAlloc(sizeof(float) * 3 * s->vertex_count);
-    rm->texcoords = (float *) MemAlloc(sizeof(float) * 2 * s->vertex_count);
-    rm->texcoords2 = (float *) MemAlloc(sizeof(float) * 2 * s->vertex_count);
+    rm->vertices   = (float *) MemAlloc(sizeof(float) * 3 * m->vertex_count);
+    rm->texcoords  = (float *) MemAlloc(sizeof(float) * 2 * m->vertex_count);
+    rm->texcoords2 = (float *) MemAlloc(sizeof(float) * 2 * m->vertex_count);
 
-    for (uint32_t i = 0; i < s->vertex_count; i++) {
-        const mesh_vertex *v = &s->vertices[i];
+    for (uint32_t i = 0; i < m->vertex_count; i++) {
+        const mesh_vertex *v = &m->vertices[i];
         rm->vertices[i * 3 + 0] = v->x;
         rm->vertices[i * 3 + 1] = v->y;
         rm->vertices[i * 3 + 2] = v->z;
@@ -273,7 +262,41 @@ static void upload_surface_mesh(mesh_surface *s) {
     }
 
     UploadMesh(rm, false);
-    s->uploaded = 1;
+    m->uploaded = 1;
+}
+
+// Allocate an IBO for a surface, sized to its all_index_count, in dynamic mode.
+// Initial contents are zero; vis_update will overwrite each frame.
+static int upload_surface_ibo(mesh_surface *s) {
+    if (s->all_index_count == 0) {
+        s->ibo_id = 0;
+        return 1;
+    }
+    // rlLoadVertexBufferElement takes a (void*, int sizeBytes, bool dynamic) tuple.
+    // Pass NULL to allocate without an initial upload; some drivers require a
+    // non-NULL pointer, so initialize with zeros.
+    uint32_t *zero = calloc(s->all_index_count, sizeof(uint32_t));
+    if (zero == NULL) {
+        printf("mesh: failed to allocate IBO scratch\n");
+        return 0;
+    }
+    s->ibo_id = rlLoadVertexBufferElement(zero,
+                                          (int) (s->all_index_count * sizeof(uint32_t)),
+                                          true);
+    free(zero);
+    if (s->ibo_id == 0) {
+        printf("mesh: rlLoadVertexBufferElement returned 0\n");
+        return 0;
+    }
+    // Also allocate the CPU-side staging buffer.
+    s->frame_index_capacity = s->all_index_count;
+    s->frame_indices = calloc(s->frame_index_capacity, sizeof(uint32_t));
+    if (s->frame_indices == NULL) {
+        printf("mesh: failed to allocate frame_indices\n");
+        return 0;
+    }
+    s->frame_index_count = 0;
+    return 1;
 }
 
 mesh *mesh_from_bsp(const bsp_model *bsp) {
@@ -317,25 +340,61 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
 
     point3f temp[MAX_FACE_VERTICES];
 
-    uint32_t *per_opaque_count = NULL;
-    uint32_t per_opaque_cap = 0;
-    uint32_t *per_trans_count = NULL;
-    uint32_t per_trans_cap = 0;
+    // Per-face metadata, sized to the BSP face count. Faces we skip stay
+    // zeroed (index_count == 0).
+    m->faces = calloc(bsp->num_faces, sizeof(mesh_face_info));
+    if (m->faces == NULL) {
+        printf("mesh: failed to allocate face metadata\n");
+        lm_free(atlas);
+        mesh_free(m);
+        return NULL;
+    }
+    m->face_count = bsp->num_faces;
 
-    // ---- First pass: tally vertices per surface (both opaque and transparent) ----
+    // First pass: count vertices and indices.
+    //
+    // Vertices: total triangle-list vertex count across all kept faces. Each
+    // face contributes (n - 2) * 3 vertices (we re-emit p0 for every triangle
+    // in the fan; this matches the previous behaviour and keeps lightmap UVs
+    // exact per-triangle).
+    uint32_t total_verts = 0;
     for (uint32_t i = 0; i < bsp->num_faces; i++) {
         const bsp_face *face = &bsp->faces[i];
-
-        if (face->num_edges < 3)
-            continue;
-
-        if (face->texture_info >= bsp->num_texinfo)
-            continue;
-
+        if (face->num_edges < 3) continue;
+        if (face->texture_info >= bsp->num_texinfo) continue;
         const bsp_texinfo *ti = &bsp->texinfo[face->texture_info];
+        if (is_utility_texture(ti->texture_name)) continue;
 
-        if (is_utility_texture(ti->texture_name))
-            continue;
+        int n = gather_face_points(bsp, face, temp);
+        if (n < 3) continue;
+
+        total_verts += (uint32_t) (n - 2) * 3u;
+    }
+
+    if (total_verts > 0) {
+        m->vertices = calloc(total_verts, sizeof(mesh_vertex));
+        if (m->vertices == NULL) {
+            printf("mesh: failed to allocate shared vertex buffer\n");
+            lm_free(atlas);
+            mesh_free(m);
+            return NULL;
+        }
+    }
+    m->vertex_count = 0;
+
+    // Per-surface tally arrays (count indices we'll push into each bucket).
+    uint32_t *per_opaque_count = NULL;
+    uint32_t  per_opaque_cap = 0;
+    uint32_t *per_trans_count = NULL;
+    uint32_t  per_trans_cap = 0;
+
+    // ---- First pass over surfaces: create buckets and tally per-bucket index counts. ----
+    for (uint32_t i = 0; i < bsp->num_faces; i++) {
+        const bsp_face *face = &bsp->faces[i];
+        if (face->num_edges < 3) continue;
+        if (face->texture_info >= bsp->num_texinfo) continue;
+        const bsp_texinfo *ti = &bsp->texinfo[face->texture_info];
+        if (is_utility_texture(ti->texture_name)) continue;
 
         float face_alpha = ALPHA_OPAQUE;
         if (ti->flags & SURF_TRANS33) face_alpha = ALPHA_TRANS33;
@@ -347,19 +406,17 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
 
         uint32_t gl_id = m->textures[tex_index].id;
 
-        mesh_surface **target_list = is_trans ? &m->trans_surfaces : &m->surfaces;
-        uint32_t *target_count = is_trans ? &m->trans_surface_count : &m->surface_count;
+        mesh_surface **target_list  = is_trans ? &m->trans_surfaces : &m->surfaces;
+        uint32_t      *target_count = is_trans ? &m->trans_surface_count : &m->surface_count;
 
         int surf_index = find_or_create_surface_in(target_list, target_count, gl_id, face_alpha);
         if (surf_index < 0) continue;
 
-        // Grow the right tally array
-        uint32_t cur_count = *target_count;
         uint32_t **tally_ptr = is_trans ? &per_trans_count : &per_opaque_count;
-        uint32_t *cap_ptr = is_trans ? &per_trans_cap : &per_opaque_cap;
+        uint32_t  *cap_ptr   = is_trans ? &per_trans_cap   : &per_opaque_cap;
 
-        if (cur_count > *cap_ptr) {
-            uint32_t new_cap = cur_count;
+        if (*target_count > *cap_ptr) {
+            uint32_t new_cap = *target_count;
             uint32_t *new_tally = realloc(*tally_ptr, new_cap * sizeof(uint32_t));
             if (new_tally == NULL) {
                 printf("mesh: failed to allocate per-surface tally\n");
@@ -376,66 +433,69 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
             *cap_ptr = new_cap;
         }
 
-        int count = gather_face_points(bsp, face, temp);
-        if (count < 3) continue;
+        int n = gather_face_points(bsp, face, temp);
+        if (n < 3) continue;
 
-        (*tally_ptr)[surf_index] += (uint32_t) (count - 2) * 3u;
+        (*tally_ptr)[surf_index] += (uint32_t) (n - 2) * 3u;
     }
 
-    // ---- Allocate opaque vertex buffers ----
+    // ---- Allocate per-surface static index buffers. ----
     for (uint32_t i = 0; i < m->surface_count; i++) {
         uint32_t n = per_opaque_count[i];
-        if (n == 0) {
-            m->surfaces[i].vertices = NULL;
-            m->surfaces[i].vertex_count = 0;
-            continue;
-        }
-        m->surfaces[i].vertices = calloc(n, sizeof(mesh_vertex));
-        if (m->surfaces[i].vertices == NULL) {
-            printf("mesh: failed to allocate vertices for opaque surface %u\n", i);
+        m->surfaces[i].all_index_count = n;
+        if (n == 0) continue;
+        m->surfaces[i].all_indices = calloc(n, sizeof(uint32_t));
+        if (m->surfaces[i].all_indices == NULL) {
+            printf("mesh: failed to allocate opaque index buffer %u\n", i);
             free(per_opaque_count);
             free(per_trans_count);
             lm_free(atlas);
             mesh_free(m);
             return NULL;
         }
-        m->surfaces[i].vertex_count = 0;
     }
-
-    // ---- Allocate transparent vertex buffers ----
     for (uint32_t i = 0; i < m->trans_surface_count; i++) {
         uint32_t n = per_trans_count[i];
-        if (n == 0) {
-            m->trans_surfaces[i].vertices = NULL;
-            m->trans_surfaces[i].vertex_count = 0;
-            continue;
-        }
-        m->trans_surfaces[i].vertices = calloc(n, sizeof(mesh_vertex));
-        if (m->trans_surfaces[i].vertices == NULL) {
-            printf("mesh: failed to allocate vertices for trans surface %u\n", i);
+        m->trans_surfaces[i].all_index_count = n;
+        if (n == 0) continue;
+        m->trans_surfaces[i].all_indices = calloc(n, sizeof(uint32_t));
+        if (m->trans_surfaces[i].all_indices == NULL) {
+            printf("mesh: failed to allocate trans index buffer %u\n", i);
             free(per_opaque_count);
             free(per_trans_count);
             lm_free(atlas);
             mesh_free(m);
             return NULL;
         }
-        m->trans_surfaces[i].vertex_count = 0;
     }
 
-    // ---- Second pass: generate vertices for every face ----
+    // Reset surface index write cursors; we reuse the count fields as cursors.
+    uint32_t *opaque_cursor = calloc(m->surface_count + 1u, sizeof(uint32_t));
+    uint32_t *trans_cursor  = calloc(m->trans_surface_count + 1u, sizeof(uint32_t));
+    if ((m->surface_count > 0 && opaque_cursor == NULL) ||
+        (m->trans_surface_count > 0 && trans_cursor == NULL)) {
+        printf("mesh: failed to allocate per-surface cursor\n");
+        free(per_opaque_count);
+        free(per_trans_count);
+        free(opaque_cursor);
+        free(trans_cursor);
+        lm_free(atlas);
+        mesh_free(m);
+        return NULL;
+    }
+
+    // ---- Second pass: emit vertices into shared buffer, indices into buckets,
+    //      face metadata into mesh.faces. ----
     for (uint32_t i = 0; i < bsp->num_faces; i++) {
         const bsp_face *face = &bsp->faces[i];
 
-        if (face->num_edges < 3)
-            continue;
+        // Default: this face is skipped (index_count == 0 already from calloc).
+        mesh_face_info *fi = &m->faces[i];
 
-        if (face->texture_info >= bsp->num_texinfo)
-            continue;
-
+        if (face->num_edges < 3) continue;
+        if (face->texture_info >= bsp->num_texinfo) continue;
         const bsp_texinfo *ti = &bsp->texinfo[face->texture_info];
-
-        if (is_utility_texture(ti->texture_name))
-            continue;
+        if (is_utility_texture(ti->texture_name)) continue;
 
         float face_alpha = ALPHA_OPAQUE;
         if (ti->flags & SURF_TRANS33) face_alpha = ALPHA_TRANS33;
@@ -455,22 +515,35 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
 
         uint32_t gl_id = m->textures[tex_index].id;
 
-        mesh_surface *list = is_trans ? m->trans_surfaces : m->surfaces;
-        uint32_t list_count = is_trans ? m->trans_surface_count : m->surface_count;
+        mesh_surface *list       = is_trans ? m->trans_surfaces      : m->surfaces;
+        uint32_t      list_count = is_trans ? m->trans_surface_count : m->surface_count;
 
         int surf_index = find_surface_by_id_alpha(list, list_count, gl_id, face_alpha);
         if (surf_index < 0) continue;
 
-        int count = gather_face_points(bsp, face, temp);
-        if (count < 3) continue;
+        int n = gather_face_points(bsp, face, temp);
+        if (n < 3) continue;
 
         float tex_w = (float) m->textures[tex_index].width;
         float tex_h = (float) m->textures[tex_index].height;
         if (tex_w <= 0.0f) tex_w = 1.0f;
         if (tex_h <= 0.0f) tex_h = 1.0f;
 
-        mesh_surface *s = &list[surf_index];
         const lm_face_info *finfo = &atlas->faces[i];
+
+        // Triangle-fan: emit (n - 2) triangles, each as 3 fresh vertices.
+        uint32_t *cursor = is_trans ? &trans_cursor[surf_index] : &opaque_cursor[surf_index];
+        mesh_surface *s = &list[surf_index];
+
+        // Record face metadata BEFORE we start writing this face's indices.
+        fi->surface_index = (uint32_t) surf_index;
+        fi->first_index   = *cursor;
+        fi->is_trans      = (uint8_t) is_trans;
+
+        Vector3 bbmin = (Vector3){ 1e30f,  1e30f,  1e30f};
+        Vector3 bbmax = (Vector3){-1e30f, -1e30f, -1e30f};
+        double cx = 0.0, cy = 0.0, cz = 0.0;
+        uint32_t verts_written = 0;
 
         point3f p0 = temp[0];
         float u0 = (p0.x * ti->u_axis.x + p0.y * ti->u_axis.y + p0.z * ti->u_axis.z + ti->u_offset) / tex_w;
@@ -478,7 +551,7 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
         float lu0, lv0;
         compute_lightmap_uv(ti, finfo, &p0, atlas->width, atlas->height, &lu0, &lv0);
 
-        for (int j = 1; j < count - 1; j++) {
+        for (int j = 1; j < n - 1; j++) {
             point3f p1 = temp[j];
             point3f p2 = temp[j + 1];
 
@@ -492,36 +565,86 @@ mesh *mesh_from_bsp(const bsp_model *bsp) {
             compute_lightmap_uv(ti, finfo, &p1, atlas->width, atlas->height, &lu1, &lv1);
             compute_lightmap_uv(ti, finfo, &p2, atlas->width, atlas->height, &lu2, &lv2);
 
-            s->vertices[s->vertex_count++] = (mesh_vertex){p2.x, p2.z, -p2.y, u2, v2, lu2, lv2};
-            s->vertices[s->vertex_count++] = (mesh_vertex){p1.x, p1.z, -p1.y, u1, v1, lu1, lv1};
-            s->vertices[s->vertex_count++] = (mesh_vertex){p0.x, p0.z, -p0.y, u0, v0, lu0, lv0};
+            // Emit three new vertices, in the original winding order:
+            // (p2 swapped, p1 swapped, p0 swapped) as the previous code did.
+            uint32_t vi_a = m->vertex_count++;
+            m->vertices[vi_a] = (mesh_vertex){p2.x, p2.z, -p2.y, u2, v2, lu2, lv2};
+            uint32_t vi_b = m->vertex_count++;
+            m->vertices[vi_b] = (mesh_vertex){p1.x, p1.z, -p1.y, u1, v1, lu1, lv1};
+            uint32_t vi_c = m->vertex_count++;
+            m->vertices[vi_c] = (mesh_vertex){p0.x, p0.z, -p0.y, u0, v0, lu0, lv0};
+
+            s->all_indices[(*cursor)++] = vi_a;
+            s->all_indices[(*cursor)++] = vi_b;
+            s->all_indices[(*cursor)++] = vi_c;
+
+            // AABB / centroid accumulation, in raylib (post-swap) space.
+            for (int kk = 0; kk < 3; kk++) {
+                const mesh_vertex *vv = (kk == 0) ? &m->vertices[vi_a]
+                                        : (kk == 1) ? &m->vertices[vi_b]
+                                                    : &m->vertices[vi_c];
+                if (vv->x < bbmin.x) bbmin.x = vv->x;
+                if (vv->y < bbmin.y) bbmin.y = vv->y;
+                if (vv->z < bbmin.z) bbmin.z = vv->z;
+                if (vv->x > bbmax.x) bbmax.x = vv->x;
+                if (vv->y > bbmax.y) bbmax.y = vv->y;
+                if (vv->z > bbmax.z) bbmax.z = vv->z;
+                cx += vv->x;
+                cy += vv->y;
+                cz += vv->z;
+                verts_written++;
+            }
+        }
+
+        fi->index_count = *cursor - fi->first_index;
+        fi->bbox_min    = bbmin;
+        fi->bbox_max    = bbmax;
+        if (verts_written > 0) {
+            double inv = 1.0 / (double) verts_written;
+            fi->centroid = (Vector3){(float)(cx * inv), (float)(cy * inv), (float)(cz * inv)};
         }
     }
 
     free(per_opaque_count);
     free(per_trans_count);
+    free(opaque_cursor);
+    free(trans_cursor);
     lm_free(atlas);
 
-    // ---- Compute centroids for transparent surfaces ----
+    // ---- Per-surface static centroid (mean of vertex positions) ----
+    // Used as a fallback when no faces are visible for the back-to-front sort.
     for (uint32_t i = 0; i < m->trans_surface_count; i++) {
         mesh_surface *s = &m->trans_surfaces[i];
-        if (s->vertex_count == 0) continue;
+        if (s->all_index_count == 0) continue;
         double cx = 0.0, cy = 0.0, cz = 0.0;
-        for (uint32_t v = 0; v < s->vertex_count; v++) {
-            cx += s->vertices[v].x;
-            cy += s->vertices[v].y;
-            cz += s->vertices[v].z;
+        for (uint32_t k = 0; k < s->all_index_count; k++) {
+            const mesh_vertex *v = &m->vertices[s->all_indices[k]];
+            cx += v->x;
+            cy += v->y;
+            cz += v->z;
         }
-        double n = (double) s->vertex_count;
-        s->centroid = (Vector3){(float)(cx / n), (float)(cy / n), (float)(cz / n)};
+        double inv = 1.0 / (double) s->all_index_count;
+        s->centroid = (Vector3){(float)(cx * inv), (float)(cy * inv), (float)(cz * inv)};
+        s->frame_centroid = s->centroid;
     }
 
-    // ---- Upload both lists as raylib Meshes ----
+    // ---- Upload the shared vertex buffer once. ----
+    upload_shared_mesh(m);
+
+    // ---- Allocate per-surface dynamic IBOs and CPU staging arrays. ----
     for (uint32_t i = 0; i < m->surface_count; i++) {
-        upload_surface_mesh(&m->surfaces[i]);
+        if (!upload_surface_ibo(&m->surfaces[i])) {
+            printf("mesh: failed to upload IBO for opaque surface %u\n", i);
+            mesh_free(m);
+            return NULL;
+        }
     }
     for (uint32_t i = 0; i < m->trans_surface_count; i++) {
-        upload_surface_mesh(&m->trans_surfaces[i]);
+        if (!upload_surface_ibo(&m->trans_surfaces[i])) {
+            printf("mesh: failed to upload IBO for trans surface %u\n", i);
+            mesh_free(m);
+            return NULL;
+        }
     }
 
     return m;
@@ -531,12 +654,17 @@ static void free_surface_list(mesh_surface *list, uint32_t count) {
     if (list == NULL) return;
     for (uint32_t i = 0; i < count; i++) {
         mesh_surface *s = &list[i];
-        if (s->uploaded) {
-            UnloadMesh(s->rl_mesh);
-            s->uploaded = 0;
+        if (s->ibo_id != 0) {
+            rlUnloadVertexBuffer(s->ibo_id);
+            s->ibo_id = 0;
         }
-        if (s->vertices != NULL) {
-            free(s->vertices);
+        if (s->all_indices != NULL) {
+            free(s->all_indices);
+            s->all_indices = NULL;
+        }
+        if (s->frame_indices != NULL) {
+            free(s->frame_indices);
+            s->frame_indices = NULL;
         }
     }
     free(list);
@@ -555,6 +683,23 @@ void mesh_free(mesh *m) {
     free_surface_list(m->trans_surfaces, m->trans_surface_count);
     m->trans_surfaces = NULL;
     m->trans_surface_count = 0;
+
+    if (m->faces != NULL) {
+        free(m->faces);
+        m->faces = NULL;
+        m->face_count = 0;
+    }
+
+    if (m->vertices != NULL) {
+        free(m->vertices);
+        m->vertices = NULL;
+        m->vertex_count = 0;
+    }
+
+    if (m->uploaded) {
+        UnloadMesh(m->rl_mesh);
+        m->uploaded = 0;
+    }
 
     if (m->textures != NULL) {
         for (uint32_t i = 0; i < m->texture_count; i++) {

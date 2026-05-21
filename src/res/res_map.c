@@ -3,6 +3,7 @@
 #include "bsp.h"
 #include "mesh.h"
 #include "res_mesh.h"
+#include "vis.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 typedef struct {
     bsp_model  *bsp;        // owned
     mesh_handle mesh;       // mesh manager owns the mesh
+    vis_state  *vis;        // owned
     char       *name;       // owned
 } map_entry;
 
@@ -43,6 +45,10 @@ void res_map_destroy(res_map_mgr *m) {
         return;
     }
     for (uint32_t i = 0; i < m->count; i++) {
+        if (m->entries[i].vis != NULL) {
+            vis_destroy(m->entries[i].vis);
+            m->entries[i].vis = NULL;
+        }
         if (m->entries[i].bsp != NULL) {
             bsp_free(m->entries[i].bsp);
             m->entries[i].bsp = NULL;
@@ -97,8 +103,19 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
         return 0;
     }
 
+    // Visibility state requires the live mesh pointer (it caches face metadata).
+    const mesh *live_mesh = res_mesh_get(m->meshes, mh);
+    vis_state *vis = vis_create(bsp, live_mesh);
+    if (vis == NULL) {
+        printf("res_map_load: failed to build visibility state for %s\n", name);
+        bsp_free(bsp);
+        // mesh stays in the mesh manager; cannot easily revoke
+        return 0;
+    }
+
     if (m->count >= m->capacity) {
         if (!grow_entries(m)) {
+            vis_destroy(vis);
             bsp_free(bsp);
             // mesh stays in the mesh manager; cannot easily revoke
             return 0;
@@ -109,6 +126,7 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
     char *name_copy = calloc(1, name_len + 1);
     if (name_copy == NULL) {
         printf("res_map_load: failed to allocate name copy\n");
+        vis_destroy(vis);
         bsp_free(bsp);
         return 0;
     }
@@ -117,6 +135,7 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
     uint32_t idx = m->count++;
     m->entries[idx].bsp = bsp;
     m->entries[idx].mesh = mh;
+    m->entries[idx].vis = vis;
     m->entries[idx].name = name_copy;
     return idx + 1;
 }
@@ -131,6 +150,7 @@ int res_map_get(const res_map_mgr *m, map_handle h, map_view *out) {
     }
     out->bsp = m->entries[idx].bsp;
     out->mesh = m->entries[idx].mesh;
+    out->vis = m->entries[idx].vis;
     out->name = m->entries[idx].name;
     return 1;
 }

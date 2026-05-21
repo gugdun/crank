@@ -3,6 +3,7 @@
 
 #include "bsp.h"
 #include "res_mesh.h"
+#include "vis.h"
 
 #include <stdint.h>
 
@@ -13,6 +14,7 @@ typedef struct res_map_mgr res_map_mgr;
 typedef struct {
     const bsp_model *bsp;       // borrowed
     mesh_handle      mesh;      // resolves via the mesh manager passed to create
+    vis_state       *vis;       // borrowed; per-frame visibility state
     const char      *name;      // borrowed (manager-owned copy)
 } map_view;
 

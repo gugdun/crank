@@ -10,7 +10,10 @@
 #include "res/res_texture.h"
 #include "sjson.h"
 #include "sys/sys_fpcam.h"
+#include "vis.h"
 #include "raylib.h"
+#include "raymath.h"
+#include "rlgl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -201,6 +204,13 @@ void sys_map_render(ecs_world *w,
         return;
     }
 
+    // view-projection matrix from raylib's active 3D mode. Multiplication
+    // order matches DrawMesh internally: MVP = (model * view) * projection,
+    // with model = identity.
+    Matrix matView = rlGetMatrixModelview();
+    Matrix matProj = rlGetMatrixProjection();
+    Matrix matVP   = MatrixMultiply(matView, matProj);
+
     ecs_iter it = ecs_query(w, g_c_map);
     ecs_entity e = ECS_INVALID;
     void *data = NULL;
@@ -211,10 +221,17 @@ void sys_map_render(ecs_world *w,
         if (!res_map_get(mapmgr, cm->map, &view)) {
             continue;
         }
-        const mesh *m = res_mesh_get(meshmgr, view.mesh);
-        if (m == NULL) {
+        const mesh *cm_mesh = res_mesh_get(meshmgr, view.mesh);
+        if (cm_mesh == NULL) {
             continue;
         }
-        r_draw_mesh(m, cam_pos);
+        // vis_update writes to per-surface frame_indices / IBOs, so it needs
+        // a non-const mesh*. The mesh manager hands out const pointers; the
+        // cast is intentional and the only mutation site for that data.
+        mesh *mut_mesh = (mesh *) cm_mesh;
+        if (view.vis != NULL) {
+            vis_update(view.vis, view.bsp, mut_mesh, cam_pos, matVP);
+        }
+        r_draw_mesh(cm_mesh, cam_pos);
     }
 }
