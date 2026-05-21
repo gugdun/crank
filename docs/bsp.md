@@ -51,25 +51,32 @@ typedef struct {
 
 Lump indices the engine uses are defined as macros:
 
-| Index | Macro             | Type read by               |
-| ----- | ----------------- | -------------------------- |
-| 0     | `BSP_ENTITIES`    | `bsp_read_entities`        |
-| 1     | `BSP_PLANES`      | `bsp_read_planes`          |
-| 2     | `BSP_VERTICES`    | `bsp_read_vertices`        |
-| 3     | `BSP_VISIBILITY`  | `bsp_read_visibility`      |
-| 4     | `BSP_NODES`       | `bsp_read_nodes`           |
-| 5     | `BSP_TEXTURES`    | `bsp_read_texinfo`         |
-| 6     | `BSP_FACES`       | `bsp_read_faces`           |
-| 7     | `BSP_LIGHTMAPS`   | `bsp_read_lightmaps`       |
-| 8     | `BSP_LEAVES`      | `bsp_read_leaves`          |
-| 9     | `BSP_LEAF_FACES`  | `bsp_read_leaf_faces`      |
-| 11    | `BSP_EDGES`       | `bsp_read_edges`           |
-| 12    | `BSP_FACE_EDGES`  | `bsp_read_face_edges`      |
-| 13    | `BSP_MODELS`      | `bsp_read_models`          |
+| Index | Macro              | Type read by               |
+| ----- | ------------------ | -------------------------- |
+| 0     | `BSP_ENTITIES`     | `bsp_read_entities`        |
+| 1     | `BSP_PLANES`       | `bsp_read_planes`          |
+| 2     | `BSP_VERTICES`     | `bsp_read_vertices`        |
+| 3     | `BSP_VISIBILITY`   | `bsp_read_visibility`      |
+| 4     | `BSP_NODES`        | `bsp_read_nodes`           |
+| 5     | `BSP_TEXTURES`     | `bsp_read_texinfo`         |
+| 6     | `BSP_FACES`        | `bsp_read_faces`           |
+| 7     | `BSP_LIGHTMAPS`    | `bsp_read_lightmaps`       |
+| 8     | `BSP_LEAVES`       | `bsp_read_leaves`          |
+| 9     | `BSP_LEAF_FACES`   | `bsp_read_leaf_faces`      |
+| 10    | `BSP_LEAF_BRUSHES` | `bsp_read_leaf_brushes`    |
+| 11    | `BSP_EDGES`        | `bsp_read_edges`           |
+| 12    | `BSP_FACE_EDGES`   | `bsp_read_face_edges`      |
+| 13    | `BSP_MODELS`       | `bsp_read_models`          |
+| 14    | `BSP_BRUSHES`      | `bsp_read_brushes`         |
+| 15    | `BSP_BRUSH_SIDES`  | `bsp_read_brush_sides`     |
 
-Other lumps (`BSP_BRUSHES`, `BSP_BRUSH_SIDES`, `BSP_AREAS`,
-`BSP_AREA_PORTALS`, `BSP_POP`, `BSP_LEAF_BRUSHES`) have their offsets
-and lengths recorded in the header but are not currently consumed.
+Other lumps (`BSP_AREAS`, `BSP_AREA_PORTALS`, `BSP_POP`) have their
+offsets and lengths recorded in the header but are not currently
+consumed.
+
+The brush lumps are consumed by the `phys` module to build a static
+collision world; see [phys.md](phys.md). They are not used by the
+renderer.
 
 ## In-memory model
 
@@ -85,12 +92,16 @@ typedef struct {
     bsp_entity     *entities;       // BSP_ENTITIES (parsed key/value form)
     uint8_t        *lightmaps;      // BSP_LIGHTMAPS (raw RGB bytes)
 
-    bsp_plane      *planes;         // BSP_PLANES (used by tree walk + PVS)
+    bsp_plane      *planes;         // BSP_PLANES (used by tree walk + PVS + collision)
     bsp_node       *nodes;          // BSP_NODES
     bsp_leaf       *leaves;         // BSP_LEAVES
     uint16_t       *leaf_faces;     // BSP_LEAF_FACES
     bsp_model_lump *models;         // BSP_MODELS (inline brush models; index 0 = worldspawn)
     uint8_t        *visibility;     // BSP_VISIBILITY (raw lump, RLE-encoded)
+
+    bsp_brush      *brushes;        // BSP_BRUSHES (convex collision volumes)
+    bsp_brush_side *brush_sides;    // BSP_BRUSH_SIDES (plane refs per brush)
+    uint16_t       *leaf_brushes;   // BSP_LEAF_BRUSHES (leaf -> brush indirection)
 
     uint32_t        num_vertices;
     uint32_t        num_edges;
@@ -107,6 +118,10 @@ typedef struct {
     uint32_t        num_models;
     uint32_t        visibility_size;
     uint32_t        num_clusters;   // parsed from the visibility lump header
+
+    uint32_t        num_brushes;
+    uint32_t        num_brush_sides;
+    uint32_t        num_leaf_brushes;
 } bsp_model;
 ```
 

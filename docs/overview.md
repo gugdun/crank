@@ -61,12 +61,14 @@ and present them with the camera each frame.
 | `lightmap`   | `lightmap.c`, `lightmap.h`                   | [lightmap.md](lightmap.md)   | Compute face extents and pack lightmaps into one atlas.         |
 | `mesh`       | `mesh.c`, `mesh.h`                           | [mesh.md](mesh.md)           | Build a shared world VBO + per-bucket dynamic IBOs + face metadata. |
 | `vis`        | `vis.c`, `vis.h`                             | [vis.md](vis.md)             | PVS + frustum culling; rewrites per-bucket IBOs each frame.     |
+| `phys`       | `phys.c`, `phys.h`                           | [phys.md](phys.md)           | Static collision world built from BSP brushes; swept-AABB trace.|
 | `render`     | `render.c`, `render.h`                       | [render.md](render.md)       | Bind lightmap shader, draw the pre-culled IBOs, immediate-mode skybox. |
 | `ecs`        | `ecs/ecs.c`, `ecs/ecs.h`                     | [ecs.md](ecs.md)             | Entity ids, sparse-set component pools, query iterator.         |
 | `res_texture`| `res/res_texture.c`, `res/res_texture.h`     | [res.md](res.md)             | Cache and own loaded `texture*` instances behind `tex_handle`.  |
 | `res_mesh`   | `res/res_mesh.c`, `res/res_mesh.h`           | [res.md](res.md)             | Own `mesh*` instances behind `mesh_handle`.                     |
 | `res_map`    | `res/res_map.c`, `res/res_map.h`             | [res.md](res.md)             | Load BSP + build mesh, expose `map_handle` views.               |
-| `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | First-person camera: transform/camera/fpcam components.         |
+| `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | Mouse-look + F11 toggle. Movement lives in `sys_player`.        |
+| `sys_player` | `sys/sys_player.c`, `sys/sys_player.h`       | [sys.md](sys.md)             | Quake-style first-person controller; physics + input + camera.  |
 | `sys_skybox` | `sys/sys_skybox.c`, `sys/sys_skybox.h`       | [sys.md](sys.md)             | Skybox component + render.                                      |
 | `sys_map`    | `sys/sys_map.c`, `sys/sys_map.h`             | [sys.md](sys.md)             | Map component + render + generic BSP entity spawner.            |
 | `entity`     | `ecs/entity.c`, `ecs/entity.h`               | (see ecs.md)                | JSON archetype parser / ECS entity factory.                   |
@@ -98,7 +100,7 @@ sjson_create_context
 res_map_load
 sys_map_process_entities (spawns from JSON)
 post-process: attach map handle, load sky textures, spawn player
-... per-frame: sys_fpcam_update + sys_*_render ...
+... per-frame: sys_fpcam_update (look) + sys_player_update (physics) + sys_*_render ...
 sjson_destroy_context
 ecs_world_destroy
 res_map_destroy
