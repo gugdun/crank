@@ -208,7 +208,11 @@ static void draw_trans_sorted(const mesh *m, Vector3 cam_pos) {
         g_trans_order[j] = oi;
     }
 
-    rlDrawRenderBatchActive();
+    // NOTE: do not call rlDrawRenderBatchActive() here. We have already
+    // flushed at the top of r_draw_mesh and the only thing it would do now
+    // is unbind our shader and VAO (see rlDrawRenderBatch in rlgl.h: it
+    // unconditionally calls glUseProgram(0) and glBindVertexArray(0) at the
+    // end, regardless of whether any batch geometry was actually drawn).
     rlEnableColorBlend();
     rlSetBlendMode(BLEND_ALPHA);
     rlDisableDepthMask();
@@ -219,7 +223,6 @@ static void draw_trans_sorted(const mesh *m, Vector3 cam_pos) {
         draw_surface(s, m->lightmap_atlas, m->has_lightmap_atlas);
     }
 
-    rlDrawRenderBatchActive();
     rlEnableDepthMask();
 }
 
