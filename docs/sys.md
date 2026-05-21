@@ -174,9 +174,14 @@ If no JSON file exists for a given `classname`, that entity is silently
 skipped. This makes the engine automatically support any BSP entity type
 as long as a matching JSON archetype is provided.
 
-`sys_map_render` iterates every `c_map`, resolves its mesh via
-`mapmgr -> meshmgr`, and calls `r_draw_mesh` per entity. Multiple map
-entities are supported but unused by the current bootstrap.
+`sys_map_render` iterates every `c_map`, resolves the map view (which
+exposes the BSP, the mesh, and the visibility state), captures the
+current view-projection matrix from `rlGetMatrixModelview()` *
+`rlGetMatrixProjection()`, calls `vis_update` to rebuild the per-bucket
+IBOs for the visible/in-frustum subset of faces, and then calls
+`r_draw_mesh`. Multiple map entities are supported but unused by the
+current bootstrap. The `vis_update` call mutates per-surface IBO state,
+which is why the const-pointer from the mesh manager is cast away here.
 
 ## Dispatch order
 

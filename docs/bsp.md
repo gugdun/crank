@@ -10,9 +10,12 @@ Loader for Quake II BSP files (version 38).
 ## Public API
 
 ```c
-bsp_model *bsp_load(const char *path);
-void bsp_free(bsp_model *bsp);
+bsp_model  *bsp_load(const char *path);
+void        bsp_free(bsp_model *bsp);
 const char *bsp_entity_get(const bsp_entity *e, const char *key);
+
+int     bsp_decompress_pvs(const bsp_model *bsp, int32_t cluster, uint8_t *out);
+int32_t bsp_find_leaf(const bsp_model *bsp, point3f point);
 ```
 
 `bsp_load(path)` opens `maps/<path>.bsp` and returns a heap-allocated
@@ -22,6 +25,17 @@ and returns `NULL`.
 
 `bsp_entity_get` is a linear-search helper that returns the value string
 for a given key on an entity, or `NULL` if the key is absent.
+
+`bsp_decompress_pvs(bsp, cluster, out)` decompresses the run-length-
+encoded potentially-visible-set bit vector for `cluster` into `out`.
+`out` must point to at least `(bsp->num_clusters + 7) / 8` bytes.
+Returns `1` on success, `0` if there is no visibility data or `cluster`
+is out of range.
+
+`bsp_find_leaf(bsp, point)` walks the BSP tree from the root and
+returns the index of the leaf that contains `point` (in BSP space), or
+`-1` if the tree is empty or malformed. The visibility system uses this
+every frame to look up the camera's cluster.
 
 ## File format
 
@@ -40,16 +54,22 @@ Lump indices the engine uses are defined as macros:
 | Index | Macro             | Type read by               |
 | ----- | ----------------- | -------------------------- |
 | 0     | `BSP_ENTITIES`    | `bsp_read_entities`        |
+| 1     | `BSP_PLANES`      | `bsp_read_planes`          |
 | 2     | `BSP_VERTICES`    | `bsp_read_vertices`        |
+| 3     | `BSP_VISIBILITY`  | `bsp_read_visibility`      |
+| 4     | `BSP_NODES`       | `bsp_read_nodes`           |
 | 5     | `BSP_TEXTURES`    | `bsp_read_texinfo`         |
 | 6     | `BSP_FACES`       | `bsp_read_faces`           |
 | 7     | `BSP_LIGHTMAPS`   | `bsp_read_lightmaps`       |
+| 8     | `BSP_LEAVES`      | `bsp_read_leaves`          |
+| 9     | `BSP_LEAF_FACES`  | `bsp_read_leaf_faces`      |
 | 11    | `BSP_EDGES`       | `bsp_read_edges`           |
 | 12    | `BSP_FACE_EDGES`  | `bsp_read_face_edges`      |
+| 13    | `BSP_MODELS`      | `bsp_read_models`          |
 
-Other lumps (`BSP_PLANES`, `BSP_NODES`, `BSP_LEAVES`, `BSP_LEAF_FACES`,
-`BSP_MODELS`, `BSP_BRUSHES`, etc.) have their offsets and lengths
-recorded in the header but are not currently consumed.
+Other lumps (`BSP_BRUSHES`, `BSP_BRUSH_SIDES`, `BSP_AREAS`,
+`BSP_AREA_PORTALS`, `BSP_POP`, `BSP_LEAF_BRUSHES`) have their offsets
+and lengths recorded in the header but are not currently consumed.
 
 ## In-memory model
 
@@ -57,21 +77,36 @@ recorded in the header but are not currently consumed.
 typedef struct {
     bsp_header header;
 
-    point3f      *vertices;       // BSP_VERTICES
-    bsp_edge     *edges;          // BSP_EDGES
-    int32_t      *face_edges;     // BSP_FACE_EDGES (signed: +i = edge i v1->v2, -i = v2->v1)
-    bsp_face     *faces;          // BSP_FACES
-    bsp_texinfo  *texinfo;        // BSP_TEXTURES
-    bsp_entity   *entities;       // BSP_ENTITIES (parsed key/value form)
-    uint8_t      *lightmaps;      // BSP_LIGHTMAPS (raw RGB bytes)
+    point3f        *vertices;       // BSP_VERTICES
+    bsp_edge       *edges;          // BSP_EDGES
+    int32_t        *face_edges;     // BSP_FACE_EDGES (signed)
+    bsp_face       *faces;          // BSP_FACES
+    bsp_texinfo    *texinfo;        // BSP_TEXTURES
+    bsp_entity     *entities;       // BSP_ENTITIES (parsed key/value form)
+    uint8_t        *lightmaps;      // BSP_LIGHTMAPS (raw RGB bytes)
 
-    uint32_t      num_vertices;
-    uint32_t      num_edges;
-    uint32_t      num_face_edges;
-    uint32_t      num_faces;
-    uint32_t      num_texinfo;
-    uint32_t      num_entities;
-    uint32_t      lightmaps_size;
+    bsp_plane      *planes;         // BSP_PLANES (used by tree walk + PVS)
+    bsp_node       *nodes;          // BSP_NODES
+    bsp_leaf       *leaves;         // BSP_LEAVES
+    uint16_t       *leaf_faces;     // BSP_LEAF_FACES
+    bsp_model_lump *models;         // BSP_MODELS (inline brush models; index 0 = worldspawn)
+    uint8_t        *visibility;     // BSP_VISIBILITY (raw lump, RLE-encoded)
+
+    uint32_t        num_vertices;
+    uint32_t        num_edges;
+    uint32_t        num_face_edges;
+    uint32_t        num_faces;
+    uint32_t        num_texinfo;
+    uint32_t        num_entities;
+    uint32_t        lightmaps_size;
+
+    uint32_t        num_planes;
+    uint32_t        num_nodes;
+    uint32_t        num_leaves;
+    uint32_t        num_leaf_faces;
+    uint32_t        num_models;
+    uint32_t        visibility_size;
+    uint32_t        num_clusters;   // parsed from the visibility lump header
 } bsp_model;
 ```
 
@@ -149,7 +184,28 @@ populated model or `NULL`.
 
 The lightmap lump is the only exception: it is allowed to be missing or
 empty, because some maps legitimately ship without lighting. The engine
-falls back to a white lightmap in that case.
+falls back to a white lightmap in that case. The visibility lump is
+also optional; if absent, `num_clusters` stays at 0 and the visibility
+system treats every face as potentially visible.
+
+## Visibility lump layout
+
+```
+uint32_t        num_clusters;
+bsp_vis_offset  offsets[num_clusters];   // byte offsets into the lump
+uint8_t         rle_data[...];           // run-length-encoded bit vectors
+```
+
+Each cluster has two byte offsets (`pvs` and `phs`); the engine uses
+only `pvs`. The bit vector for a cluster is `(num_clusters + 7) / 8`
+bytes wide and is stored RLE-compressed: any non-zero byte is emitted
+as-is, and a zero byte is followed by a count byte specifying how many
+consecutive zero bytes to expand. `bsp_decompress_pvs` performs the
+expansion into a caller-provided buffer.
+
+A leaf's `cluster` field is `uint16_t`; the sentinel value `0xFFFF`
+means "no cluster" (typically detail brushes), which never appears in
+any PVS bitset.
 
 ## Adding a new lump
 

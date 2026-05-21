@@ -59,8 +59,9 @@ and present them with the camera each frame.
 | `bsp`        | `bsp.c`, `bsp.h`                             | [bsp.md](bsp.md)             | Parse a Quake II BSP file into in-memory lumps.                 |
 | `texture`    | `texture.c`, `texture.h`                     | [texture.md](texture.md)     | Load a PNG into a raylib `Texture2D` wrapper.                   |
 | `lightmap`   | `lightmap.c`, `lightmap.h`                   | [lightmap.md](lightmap.md)   | Compute face extents and pack lightmaps into one atlas.         |
-| `mesh`       | `mesh.c`, `mesh.h`                           | [mesh.md](mesh.md)           | Build opaque+transparent GPU meshes grouped by (texture, alpha).|
-| `render`     | `render.c`, `render.h`                       | [render.md](render.md)       | Bind lightmap shader, two-pass draw, immediate-mode skybox.     |
+| `mesh`       | `mesh.c`, `mesh.h`                           | [mesh.md](mesh.md)           | Build a shared world VBO + per-bucket dynamic IBOs + face metadata. |
+| `vis`        | `vis.c`, `vis.h`                             | [vis.md](vis.md)             | PVS + frustum culling; rewrites per-bucket IBOs each frame.     |
+| `render`     | `render.c`, `render.h`                       | [render.md](render.md)       | Bind lightmap shader, draw the pre-culled IBOs, immediate-mode skybox. |
 | `ecs`        | `ecs/ecs.c`, `ecs/ecs.h`                     | [ecs.md](ecs.md)             | Entity ids, sparse-set component pools, query iterator.         |
 | `res_texture`| `res/res_texture.c`, `res/res_texture.h`     | [res.md](res.md)             | Cache and own loaded `texture*` instances behind `tex_handle`.  |
 | `res_mesh`   | `res/res_mesh.c`, `res/res_mesh.h`           | [res.md](res.md)             | Own `mesh*` instances behind `mesh_handle`.                     |

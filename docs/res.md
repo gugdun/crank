@@ -30,12 +30,13 @@ and torn down in **reverse order**. Any manager that owns GPU resources
 (textures, uploaded meshes) must be destroyed before `r_shutdown` and
 `CloseWindow`.
 
-`res_map_destroy` only frees `bsp_model*` (CPU data) and stored name
-strings. The world mesh associated with each map is owned by
-`res_mesh`, so the call chain is:
+`res_map_destroy` frees the per-map `bsp_model*`, its `vis_state*`, and
+the stored name string. The world mesh associated with each map is
+owned by `res_mesh`, so the call chain is:
 
-- `res_map_destroy(mapmgr)` -> frees bsp_models, keeps mesh handles
-  dangling (the mesh manager still owns the memory until its destroy).
+- `res_map_destroy(mapmgr)` -> frees bsp_models and vis_states; keeps
+  mesh handles dangling (the mesh manager still owns the memory until
+  its destroy).
 - `res_mesh_destroy(meshmgr)` -> `mesh_free` per entry.
 - `res_texture_destroy(texmgr)` -> `tex_free` per entry.
 
@@ -87,6 +88,7 @@ typedef struct res_map_mgr res_map_mgr;
 typedef struct {
     const bsp_model *bsp;     // borrowed
     mesh_handle      mesh;    // resolve via res_mesh_get
+    vis_state       *vis;     // borrowed; pass to vis_update each frame
     const char      *name;    // borrowed (manager-owned copy)
 } map_view;
 
@@ -97,14 +99,16 @@ map_handle   res_map_load(res_map_mgr *m, const char *name);
 int          res_map_get(const res_map_mgr *m, map_handle h, map_view *out);
 ```
 
-`res_map_load` does three things atomically:
+`res_map_load` does four things atomically:
 
 1. `bsp_load(name)` -> `bsp_model *`.
 2. `mesh_from_bsp(bsp)` -> `mesh *`, then `res_mesh_adopt`.
-3. Stores `{bsp, mesh_handle, strdup(name)}` and returns `index + 1`.
+3. `vis_create(bsp, mesh)` -> `vis_state *`.
+4. Stores `{bsp, mesh_handle, vis_state, strdup(name)}` and returns
+   `index + 1`.
 
 If any step fails, all partial state is freed before returning `0`.
 
-`res_map_get` fills `*out` with a borrowed view (the strings and `bsp_model`
-remain owned by the manager). Returns `1` on success, `0` on invalid
-handle.
+`res_map_get` fills `*out` with a borrowed view (the strings,
+`bsp_model`, and `vis_state` remain owned by the manager). Returns `1`
+on success, `0` on invalid handle.

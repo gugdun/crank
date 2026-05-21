@@ -1,9 +1,7 @@
 # render
 
-The render module is the smallest reasonable rendering layer that can
-draw the world with `diffuse * lightmap` shading and a skybox. It owns
-the lightmap shader, a reusable `Material`, and the skybox drawing
-routine.
+The render module owns the lightmap shader and draws the world using
+the per-bucket index buffers prepared by the visibility module.
 
 ## Files
 
@@ -15,82 +13,76 @@ routine.
 ## Public API
 
 ```c
-void r_init(void);                          // load shader, build material
-void r_shutdown(void);                      // unload them
+void r_init(void);
+void r_shutdown(void);
 
-void r_draw_mesh(const mesh *m, Vector3 cam_pos);  // draw the world (two-pass: opaque then transparent)
+void r_draw_mesh(const mesh *m, Vector3 cam_pos);
 void r_draw_sky(Vector3 cam_pos,
                 uint32_t bk, uint32_t dn,
                 uint32_t ft, uint32_t lf,
-                uint32_t rt, uint32_t up);  // draw a static skybox
+                uint32_t rt, uint32_t up);
 ```
+
+## Precondition
+
+`r_draw_mesh` assumes that `vis_update` was called on the same `mesh`
+immediately before. The visibility module rewrites every surface's
+dynamic IBO; `r_draw_mesh` simply binds and draws each surface that has
+`frame_index_count > 0`. `sys_map.c` enforces this order.
 
 ## Lifecycle
 
-`r_init` must be called after `InitWindow` and before any `r_draw_*`.
-It:
+`r_init` loads `shaders/lightmap.vs` + `shaders/lightmap.fs` via
+`LoadShader`. raylib auto-resolves the standard attribute names
+(`vertexPosition`, `vertexTexCoord`, `vertexTexCoord2`) and the
+standard sampler uniforms (`texture0` → `SHADER_LOC_MAP_DIFFUSE`,
+`texture1` → `SHADER_LOC_MAP_SPECULAR`). It then resolves the two
+custom uniforms (`lightScale`, `surfaceAlpha`) and seeds them with
+their defaults.
 
-1. Loads `shaders/lightmap.vs` and `shaders/lightmap.fs` via raylib's
-   `LoadShader`. raylib automatically wires the standard attribute and
-   sampler uniforms (`vertexPosition`, `vertexTexCoord`,
-   `vertexTexCoord2`, `texture0`, `texture1`, `mvp`).
-2. Looks up the custom `lightScale` uniform and initialises it to
-   `DEFAULT_LIGHT_SCALE` (2.0).
-3. Looks up the custom `surfaceAlpha` uniform and initialises it to `1.0`.
-4. Calls `LoadMaterialDefault` to get a `Material` (which allocates an
-   array of `MAX_MATERIAL_MAPS` `MaterialMap` slots) and overwrites
-   `mat.shader` with the lightmap shader.
-
-If the shader fails to compile or link, `r_init` falls back to the
-default raylib shader so the world can still be drawn (unlit). A
-`printf` warns about the failure.
-
-`r_shutdown` does the inverse: it frees `g_mat.maps` with `RL_FREE`
-(NOT `UnloadMaterial`, which would also try to free shared default
-shader resources), and unloads the lightmap shader.
+`r_shutdown` frees the sort scratch buffers and unloads the shader.
 
 ## Drawing the world
 
-`r_draw_mesh(m, cam_pos)` draws the world in two passes.
+`r_draw_mesh(m, cam_pos)` runs the full world draw:
 
-### Opaque pass
+1. Flush raylib's active batch (`rlDrawRenderBatchActive`) so any prior
+   immediate-mode geometry (e.g. the skybox) is submitted before we
+   change shader state.
+2. Bind the lightmap shader (`rlEnableShader`).
+3. Bind the shared VAO (`rlEnableVertexArray(m->rl_mesh.vaoId)`). This
+   wires positions / texcoords / texcoords2 in one call. The VAO was
+   set up by `UploadMesh` to bind attributes at the fixed
+   raylib-default locations (0, 1, 5), and `LoadShader` calls
+   `glBindAttribLocation` to match.
+4. Compute and upload the MVP uniform from `rlGetMatrixModelview()` *
+   `rlGetMatrixProjection()` (model is identity).
+5. Opaque pass: set `surfaceAlpha = 1.0`. For each surface in
+   `m->surfaces` with `frame_index_count > 0`, bind diffuse to slot 0,
+   bind lightmap to slot 1, bind the surface's IBO, call
+   `glDrawElements(GL_TRIANGLES, frame_index_count, GL_UNSIGNED_INT, 0)`.
+6. Transparent pass: distance-sort the live transparent surfaces
+   back-to-front by their `frame_centroid` (computed by `vis_update`),
+   enable alpha blending + disable depth writes, then draw the sorted
+   list with the surface's `alpha` written into `surfaceAlpha`.
+7. Restore: disable both texture slots, unbind VAO/IBO, disable shader.
 
-Sets `surfaceAlpha` to `1.0`, iterates `m->surfaces` and, for each
-surface:
+### Why `glDrawElements` directly?
 
-1. Sets `g_mat.maps[MATERIAL_MAP_DIFFUSE].texture` to a `Texture2D`
-   that carries the surface's diffuse GL id.
-2. Calls `DrawMesh(s->rl_mesh, g_mat, MatrixIdentity())`.
-
-### Transparent pass
-
-1. Computes squared distance from `cam_pos` to each transparent
-   surface's centroid.
-2. Sorts surface indices by descending distance (back-to-front) using
-   insertion sort (the count is typically small).
-3. Flushes raylib's internal batch with `rlDrawRenderBatchActive()`.
-4. Enables alpha blending (`rlEnableColorBlend` + `BLEND_ALPHA`) and
-   disables depth-mask writes (`rlDisableDepthMask`).
-5. Iterates the sorted list, setting `surfaceAlpha` to the surface's
-   `alpha` value (0.33 or 0.66) and drawing each.
-6. Flushes again and restores depth-mask writes with
-   `rlEnableDepthMask()`.
-
-Because the diffuse texture is mapped to `MATERIAL_MAP_DIFFUSE` (slot
-0) and the lightmap is mapped to `MATERIAL_MAP_SPECULAR` (slot 1), the
-shader's `texture0` sampler always reads the diffuse and `texture1`
-always reads the lightmap. This convention is locked in by raylib's
-auto-resolution of sampler uniform locations in `LoadShader`.
+raylib's `rlDrawVertexArrayElements` hard-codes the index type to
+`GL_UNSIGNED_SHORT`. Quake II world meshes routinely exceed 65536
+vertices after triangle-fanning, so the engine uses 32-bit indices and
+calls `glDrawElements` with `GL_UNSIGNED_INT`. The prototype is
+declared `extern` in `render.c`; the symbol resolves against the
+OpenGL library that raylib transitively links.
 
 ### Transparent-surface centroid sort
 
-Each transparent surface stores a `centroid` (arithmetic mean of its
-vertex positions in raylib space, computed once at build time in
-`mesh_from_bsp`). Every frame the renderer computes
-`distance² = |centroid - cam_pos|²` for each live transparent surface
-and sorts them descending. Static scratch buffers (`g_trans_order`,
-`g_trans_dist`, `g_trans_cap`) are allocated lazily and freed in
-`r_shutdown`.
+The visibility module computes a per-frame weighted centroid for each
+transparent surface based only on the faces it actually drew this
+frame. The renderer's scratch buffers (`g_trans_order`, `g_trans_dist`)
+are grown lazily; insertion-sort is used because the live count is
+small.
 
 ## Shader
 
@@ -129,50 +121,31 @@ void main() {
 }
 ```
 
-`lightScale` is a global brightness knob. Quake II's stored lightmap
-values are deliberately dark; the standard runtime multiplier is
-roughly `2.0`. Edit `DEFAULT_LIGHT_SCALE` in `render.c` to tune.
+`lightScale` is a global brightness multiplier (default 2.0; tune via
+`DEFAULT_LIGHT_SCALE` in `render.c`).
 
-`surfaceAlpha` is a per-draw alpha multiplier. It is set to `1.0` for
-the opaque pass and to the surface's `alpha` value (0.33 or 0.66) for
-the transparent pass. The final fragment alpha is
-`diffuse.a * surfaceAlpha`, so a texture's own alpha channel is also
-respected.
+`surfaceAlpha` is a per-draw alpha multiplier set to 1.0 for the
+opaque pass and to the surface's `alpha` (0.33 or 0.66) for each
+transparent draw.
 
 ## Drawing the skybox
 
-`r_draw_sky` uses raylib's immediate-mode `rlBegin/rlEnd` API to emit
-six quads around the camera. Steps:
+`r_draw_sky` uses raylib's immediate-mode `rlBegin/rlEnd` to emit six
+quads around the camera. Steps:
 
-1. `rlDisableDepthMask()` so the sky doesn't write to the depth
-   buffer; world geometry will paint over it regardless of order.
-2. `rlPushMatrix` / `rlTranslatef(cam_pos)` so the cube follows the
-   camera (giving the illusion of an infinite-distance sky).
-3. Emit six face quads, each with its own texture id, at a fixed
-   half-size of 4096 world units. Each face is two triangles with
-   hand-authored vertex/UV pairs.
-4. `rlPopMatrix`, restore depth writes, clear the bound texture.
+1. `rlDisableDepthMask()` so the sky doesn't write depth.
+2. `rlPushMatrix` + `rlTranslatef(cam_pos)` so the cube follows the
+   camera.
+3. Emit six face quads at a fixed half-size of 4096 world units.
+4. `rlPopMatrix`, clear bound texture, restore depth-mask writes.
 
-The sky uses the legacy `rlBegin` path because it's simple, fast for
-72 vertices, and decoupled from the shader-based world drawing. The
-sky uses raylib's *default* shader (whatever is currently active when
-`rlBegin` runs).
-
-## Why a single cached material
-
-`LoadMaterialDefault` allocates an array of `MaterialMap` structs every
-call. Doing it per-frame would be wasteful. Instead, `r_init` builds
-one material with our shader plugged into it and reuses it; only the
-two texture id fields change between draw calls.
-
-Note that we never call `UnloadMaterial` on `g_mat`. `UnloadMaterial`
-in raylib also tries to call `UnloadShader` on every map's texture and
-to free the shader's `locs` array, which would conflict with our
-ownership of the shader. We instead manually `RL_FREE(g_mat.maps)` in
-`r_shutdown`.
+The sky uses raylib's default shader. The world draw, which runs
+after the sky, flushes the immediate-mode batch before binding the
+lightmap shader.
 
 ## Extending the renderer
 
-If you need to add another draw type (sprites, debug lines, GUI), keep
-it isolated from the world draw path. The world path is intentionally
-narrow: one shader, one material, two loops (opaque then transparent).
+If you need to add another draw type (sprites, debug lines, GUI),
+keep it isolated from the world draw path. The world path now relies
+on a precondition (vis was just updated) that any added system must
+respect.
