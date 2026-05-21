@@ -62,7 +62,7 @@ int main(int argc, char *argv[]) {
     int height = 720;
 
     InitWindow(width, height, "crank");
-    SetTargetFPS(0);
+    SetTargetFPS(400);
     DisableCursor();
 
     r_init();

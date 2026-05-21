@@ -37,7 +37,33 @@ Inline-brush-model planes are translated by their parent model's
 world position. The `head_node` of every model is walked to attribute
 brushes to the model that owns them, so the translation is applied to
 the right brushes even when the file's brush array is shared across
-models.
+models. Inline models are walked before worldspawn so that brushes
+referenced from both subtrees end up attributed to the inline model
+(the semantically meaningful owner).
+
+### Trigger / non-blocking brush filter
+
+Quake II's qbsp3 stamps `CONTENTS_SOLID` on every brush whose miptex
+declares no other content flag, and the `trigger` texture has none. So
+trigger entity brushes look identical to walls in the BSP file - the
+fact that they're not supposed to block movement is encoded only in the
+entity's classname (in vanilla Q2 the game DLL spawns the inline model
+with `SOLID_TRIGGER`, which the trace code skips).
+
+`phys_create` mirrors that: after building `brush_to_model`, it parses
+the entities lump, finds every entity whose `model` key is `"*N"`, and
+if its `classname` is non-blocking (`trigger_*` prefix or
+`func_areaportal`), marks inline model `N` as non-blocking. Brushes
+owned by non-blocking inline models are then **left zeroed during the
+bake** (`num_planes = 0`, `contents = 0`). Both the per-brush mask test
+in `phys_trace_box` and the contents-mask early-out in
+`clip_box_to_brush` reject them without touching their (unset) plane
+data.
+
+The filter is intentionally classname-based, not texture-based: triggers
+that have been retextured still get caught, and the (rare) brush
+genuinely textured with `trigger` that isn't owned by a trigger entity
+still collides.
 
 `phys_destroy(w)` frees the world. `NULL` is tolerated.
 

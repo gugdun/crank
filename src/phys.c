@@ -105,13 +105,15 @@ static phys_aabb compute_brush_aabb(const phys_plane *planes, uint32_t num_plane
 // Find which BSP model owns a given brush index by scanning the leaves of each
 // model's subtree. Returns model index (0 = worldspawn) or 0 if none found.
 // This is needed because the file stores all brushes globally; inline-model
-// brushes must be translated by their model's origin.
+// brushes must be translated by their model's origin (and inline-model
+// brushes owned by trigger-like entities must be excluded from collision).
 //
 // Implementation: walk each model's head_node subtree, and for every leaf,
 // every brush referenced by leaf_brushes is "owned" by that model. We mark
-// brush->model_index. Worldspawn is processed first (model 0), so any brush
-// also reachable from inline models keeps its worldspawn ownership (this is
-// fine because worldspawn brushes don't get translated).
+// brush_to_model[brush_idx]. Inline models (1..N-1) are walked FIRST so they
+// claim their brushes before worldspawn does; this matters because the file
+// stores all brushes in one global array and worldspawn's tree can in
+// principle reach the same brushes referenced by an inline model.
 typedef struct {
     const bsp_model *bsp;
     uint32_t        *brush_to_model;   // size = bsp->num_brushes; 0xFFFFFFFF if unowned
@@ -138,6 +140,39 @@ static void walk_node_collect(const ownership_ctx *ctx, int32_t node_idx, uint32
     const bsp_node *node = &ctx->bsp->nodes[node_idx];
     walk_node_collect(ctx, node->front_child, model_idx);
     walk_node_collect(ctx, node->back_child, model_idx);
+}
+
+// Q2 stores trigger entity brushes with CONTENTS_SOLID on disk (qbsp3 stamps
+// CONTENTS_SOLID on any side whose miptex declares no other content flag, and
+// the "trigger" texture has none). The fact that those brushes are not
+// supposed to collide is encoded only in the entity's classname; the engine
+// at runtime spawns the inline model with SOLID_TRIGGER and the trace code
+// skips it. We mirror that here: any inline brush model referenced by an
+// entity whose classname starts with "trigger_" - or matches one of a small
+// list of other non-blocking classes - is excluded from the bake.
+//
+// We deliberately use prefix matching for "trigger_" rather than a full
+// allowlist so that game-specific trigger variants (trigger_push,
+// trigger_hurt, trigger_multiple, trigger_once, trigger_relay, ...) all get
+// caught without needing per-classname maintenance.
+static int classname_is_non_blocking(const char *classname) {
+    if (classname == NULL) return 0;
+    if (strncmp(classname, "trigger_", 8) == 0) return 1;
+    // Area portals are also brush entities that should never block movement;
+    // they're handled by the vis/area system, not the collider.
+    if (strcmp(classname, "func_areaportal") == 0) return 1;
+    return 0;
+}
+
+// Parse the "*N" model reference an entity may carry, returning N or -1.
+static int parse_inline_model_index(const char *model_str) {
+    if (model_str == NULL) return -1;
+    if (model_str[0] != '*') return -1;
+    char *endp = NULL;
+    long v = strtol(model_str + 1, &endp, 10);
+    if (endp == model_str + 1) return -1;
+    if (v < 0 || v > 0x7FFF) return -1;
+    return (int) v;
 }
 
 phys_world *phys_create(const bsp_model *bsp) {
@@ -170,10 +205,18 @@ phys_world *phys_create(const bsp_model *bsp) {
         brush_to_model[i] = 0xFFFFFFFFu;
     }
 
+    // Walk inline models (1..N-1) first so they claim their brushes before
+    // worldspawn does. Worldspawn's tree can in principle visit the same leaf
+    // brushes referenced from an inline model's tree; the inline model is the
+    // semantically meaningful owner because that's the entity-level grouping
+    // we need to consult for the trigger filter below.
     ownership_ctx octx = { .bsp = bsp, .brush_to_model = brush_to_model };
-    for (uint32_t mi = 0; mi < bsp->num_models; mi++) {
+    for (uint32_t mi = 1; mi < bsp->num_models; mi++) {
         const bsp_model_lump *bm = &bsp->models[mi];
         walk_node_collect(&octx, bm->head_node, mi);
+    }
+    if (bsp->num_models > 0) {
+        walk_node_collect(&octx, bsp->models[0].head_node, 0);
     }
     // Any leftover brushes not reached via any model's tree default to worldspawn.
     for (uint32_t i = 0; i < bsp->num_brushes; i++) {
@@ -182,39 +225,88 @@ phys_world *phys_create(const bsp_model *bsp) {
         }
     }
 
-    // Allocate output arrays.
+    // Build per-model "blocks movement" flag. Model 0 (worldspawn) always
+    // blocks. Inline models block by default; any inline model referenced by
+    // an entity with a non-blocking classname (trigger_*, func_areaportal)
+    // becomes non-blocking and its brushes will be skipped during the bake.
+    uint8_t *model_blocks = calloc(bsp->num_models > 0 ? bsp->num_models : 1,
+                                   sizeof(uint8_t));
+    if (model_blocks == NULL) {
+        printf("phys_create: failed to allocate model_blocks\n");
+        free(brush_to_model);
+        phys_destroy(w);
+        return NULL;
+    }
+    for (uint32_t mi = 0; mi < bsp->num_models; mi++) {
+        model_blocks[mi] = 1;
+    }
+    uint32_t num_filtered_models = 0;
+    for (uint32_t ei = 0; ei < bsp->num_entities; ei++) {
+        const bsp_entity *be = &bsp->entities[ei];
+        const char *classname = bsp_entity_get(be, "classname");
+        if (!classname_is_non_blocking(classname)) continue;
+        const char *model_str = bsp_entity_get(be, "model");
+        int mi = parse_inline_model_index(model_str);
+        if (mi <= 0 || (uint32_t) mi >= bsp->num_models) continue;
+        if (model_blocks[mi]) {
+            model_blocks[mi] = 0;
+            num_filtered_models++;
+        }
+    }
+
+    // Allocate output arrays. We size them to the full BSP brush count for
+    // simplicity; brushes owned by non-blocking inline models stay zeroed
+    // (num_planes == 0, contents == 0) and are cheaply skipped by the trace
+    // mask test, but they don't get plane data written into brush_planes.
     w->brushes = calloc(bsp->num_brushes, sizeof(phys_brush));
     w->brush_aabbs = calloc(bsp->num_brushes, sizeof(phys_aabb));
     if (w->brushes == NULL || w->brush_aabbs == NULL) {
         printf("phys_create: failed to allocate brushes\n");
         free(brush_to_model);
+        free(model_blocks);
         phys_destroy(w);
         return NULL;
     }
 
-    // Count total brush sides to allocate a flat plane array.
+    // Count total brush sides to allocate a flat plane array. Brushes from
+    // non-blocking models are excluded here so we don't waste plane slots.
     uint32_t total_planes = 0;
     for (uint32_t i = 0; i < bsp->num_brushes; i++) {
+        uint32_t mi = brush_to_model[i];
+        if (mi < bsp->num_models && !model_blocks[mi]) continue;
         total_planes += bsp->brushes[i].num_sides;
     }
     w->brush_planes = calloc(total_planes > 0 ? total_planes : 1, sizeof(phys_plane));
     if (w->brush_planes == NULL) {
         printf("phys_create: failed to allocate brush_planes\n");
         free(brush_to_model);
+        free(model_blocks);
         phys_destroy(w);
         return NULL;
     }
 
-    // Bake each brush.
+    // Bake each brush. Brushes owned by non-blocking inline models
+    // (trigger_*, func_areaportal, ...) are left zeroed; their contents stay
+    // at 0 so both phys_trace_box's per-brush mask check and
+    // clip_box_to_brush's contents-mask early-out reject them without
+    // touching their (unset) plane data.
     uint32_t plane_cursor = 0;
+    uint32_t num_filtered_brushes = 0;
     for (uint32_t i = 0; i < bsp->num_brushes; i++) {
         const bsp_brush *bb = &bsp->brushes[i];
         phys_brush *pb = &w->brushes[i];
+
+        uint32_t model_idx = brush_to_model[i];
+        if (model_idx < bsp->num_models && !model_blocks[model_idx]) {
+            // Leave pb zeroed; nothing further to do for this brush.
+            num_filtered_brushes++;
+            continue;
+        }
+
         pb->first_plane = plane_cursor;
         pb->num_planes  = bb->num_sides;
         pb->contents    = bb->contents;
 
-        uint32_t model_idx = brush_to_model[i];
         Vector3 offset = (Vector3){0, 0, 0};
         if (model_idx > 0 && model_idx < bsp->num_models) {
             offset = bsp_to_rl(bsp->models[model_idx].origin);
@@ -246,8 +338,11 @@ phys_world *phys_create(const bsp_model *bsp) {
     w->num_brushes = bsp->num_brushes;
 
     free(brush_to_model);
-    printf("phys_create: %u brushes, %u brush planes\n",
-           w->num_brushes, w->num_brush_planes);
+    free(model_blocks);
+    printf("phys_create: %u brushes (%u filtered from %u non-blocking models),"
+           " %u brush planes\n",
+           w->num_brushes, num_filtered_brushes, num_filtered_models,
+           w->num_brush_planes);
     return w;
 }
 
