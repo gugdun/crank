@@ -247,6 +247,57 @@ static bsp_leaf *bsp_read_leaves(bsp_header header, uint32_t *count, FILE *bsp_f
     return leaves;
 }
 
+static bsp_brush *bsp_read_brushes(bsp_header header, uint32_t *count, FILE *bsp_file) {
+    if (count == NULL) {
+        printf("bsp_read_brushes: count = NULL\n");
+        return NULL;
+    }
+
+    bsp_brush *brushes = (bsp_brush *) bsp_read_lump(header, BSP_BRUSHES, "bsp_read_brushes", bsp_file);
+    if (brushes == NULL) {
+        return NULL;
+    }
+
+    *count = header.lump[BSP_BRUSHES].length / sizeof(bsp_brush);
+    printf("bsp_read_brushes: count = %u\n", *count);
+
+    return brushes;
+}
+
+static bsp_brush_side *bsp_read_brush_sides(bsp_header header, uint32_t *count, FILE *bsp_file) {
+    if (count == NULL) {
+        printf("bsp_read_brush_sides: count = NULL\n");
+        return NULL;
+    }
+
+    bsp_brush_side *sides = (bsp_brush_side *) bsp_read_lump(header, BSP_BRUSH_SIDES, "bsp_read_brush_sides", bsp_file);
+    if (sides == NULL) {
+        return NULL;
+    }
+
+    *count = header.lump[BSP_BRUSH_SIDES].length / sizeof(bsp_brush_side);
+    printf("bsp_read_brush_sides: count = %u\n", *count);
+
+    return sides;
+}
+
+static uint16_t *bsp_read_leaf_brushes(bsp_header header, uint32_t *count, FILE *bsp_file) {
+    if (count == NULL) {
+        printf("bsp_read_leaf_brushes: count = NULL\n");
+        return NULL;
+    }
+
+    uint16_t *lb = (uint16_t *) bsp_read_lump(header, BSP_LEAF_BRUSHES, "bsp_read_leaf_brushes", bsp_file);
+    if (lb == NULL) {
+        return NULL;
+    }
+
+    *count = header.lump[BSP_LEAF_BRUSHES].length / sizeof(uint16_t);
+    printf("bsp_read_leaf_brushes: count = %u\n", *count);
+
+    return lb;
+}
+
 static bsp_model_lump *bsp_read_models(bsp_header header, uint32_t *count, FILE *bsp_file) {
     if (count == NULL) {
         printf("bsp_read_models: count = NULL\n");
@@ -630,6 +681,28 @@ bsp_model *bsp_load(const char *path) {
     // can render without inline models.
     bsp->models = bsp_read_models(bsp->header, &bsp->num_models, bsp_file);
 
+    // Brush data for collision.
+    bsp->brushes = bsp_read_brushes(bsp->header, &bsp->num_brushes, bsp_file);
+    if (bsp->brushes == NULL) {
+        bsp_free(bsp);
+        fclose(bsp_file);
+        return NULL;
+    }
+
+    bsp->brush_sides = bsp_read_brush_sides(bsp->header, &bsp->num_brush_sides, bsp_file);
+    if (bsp->brush_sides == NULL) {
+        bsp_free(bsp);
+        fclose(bsp_file);
+        return NULL;
+    }
+
+    bsp->leaf_brushes = bsp_read_leaf_brushes(bsp->header, &bsp->num_leaf_brushes, bsp_file);
+    if (bsp->leaf_brushes == NULL) {
+        bsp_free(bsp);
+        fclose(bsp_file);
+        return NULL;
+    }
+
     // Visibility is optional (some maps have no PVS data, e.g. test maps)
     bsp->visibility = bsp_read_visibility(bsp->header, &bsp->visibility_size, bsp_file);
     if (bsp->visibility != NULL && bsp->visibility_size >= sizeof(uint32_t)) {
@@ -776,6 +849,9 @@ void bsp_free(bsp_model *bsp) {
     if (bsp->leaf_faces != NULL) bsp_free_lump(bsp->leaf_faces, "leaf_faces");
     if (bsp->models != NULL)     bsp_free_lump(bsp->models, "models");
     if (bsp->visibility != NULL) bsp_free_lump(bsp->visibility, "visibility");
+    if (bsp->brushes != NULL)      bsp_free_lump(bsp->brushes, "brushes");
+    if (bsp->brush_sides != NULL)  bsp_free_lump(bsp->brush_sides, "brush_sides");
+    if (bsp->leaf_brushes != NULL) bsp_free_lump(bsp->leaf_brushes, "leaf_brushes");
 
     free(bsp);
 }

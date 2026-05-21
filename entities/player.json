@@ -16,6 +16,22 @@
             "m_yaw": 0.022,
             "m_pitch": 0.022,
             "pitch_clamp": 89.0
+        },
+        "c_player": {
+            "half_extents": [16.0, 28.0, 16.0],
+            "eye_height": 24.0,
+            "step_height": 18.0,
+            "accelerate": 10.0,
+            "air_accelerate": 1.0,
+            "max_speed": 320.0,
+            "friction": 6.0,
+            "stop_speed": 100.0,
+            "gravity": 800.0,
+            "jump_speed": 270.0,
+            "noclip": false
+        },
+        "c_velocity": {
+            "velocity": [0.0, 0.0, 0.0]
         }
     }
 }

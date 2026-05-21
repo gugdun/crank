@@ -11,6 +11,7 @@
 #include "sjson.h"
 #include "sys/sys_fpcam.h"
 #include "sys/sys_map.h"
+#include "sys/sys_player.h"
 #include "sys/sys_skybox.h"
 
 #include <stdio.h>
@@ -61,7 +62,7 @@ int main(int argc, char *argv[]) {
     int height = 720;
 
     InitWindow(width, height, "crank");
-    SetTargetFPS(300);
+    SetTargetFPS(0);
     DisableCursor();
 
     r_init();
@@ -94,6 +95,7 @@ int main(int argc, char *argv[]) {
 
     sys_fpcam_register(world);
     sys_map_register(world);
+    sys_player_register(world);
     sys_skybox_register(world);
 
     sjson_context *sctx = sjson_create_context(512, 4096, NULL);
@@ -251,6 +253,7 @@ int main(int argc, char *argv[]) {
     while (!WindowShouldClose()) {
         float delta = GetFrameTime();
         sys_fpcam_update(world, delta);
+        sys_player_update(world, view.phys, delta);
 
         Camera cam = sys_fpcam_active(world);
 

@@ -136,19 +136,20 @@ void sys_fpcam_update(ecs_world *w, float dt) {
         return;
     }
 
-    // Global toggles (input-tied; lives with the player controller for now).
+    (void)dt;
+
+    // Global toggles (input-tied; lives with the camera controller).
     if (IsKeyPressed(KEY_F11)) {
         ToggleFullscreen();
     }
 
-    int forward  = IsKeyDown(KEY_W);
-    int backward = IsKeyDown(KEY_S);
-    int left     = IsKeyDown(KEY_A);
-    int right    = IsKeyDown(KEY_D);
-    int up       = IsKeyDown(KEY_SPACE);
-    int down     = IsKeyDown(KEY_LEFT_SHIFT);
-
     Vector2 mouse_delta = GetMouseDelta();
+
+    // Look only. Movement is owned by sys_player (which also overrides the
+    // camera matrix with the player's eye position). Entities that have a
+    // c_fpcam but no c_player still get their camera matrix rebuilt from
+    // c_transform here, so the legacy "fly camera" entity still works.
+    ecs_component_id c_player_id = ecs_lookup(w, "c_player");
 
     ecs_iter it = ecs_query(w, g_c_fpcam);
     ecs_entity e = ECS_INVALID;
@@ -161,28 +162,22 @@ void sys_fpcam_update(ecs_world *w, float dt) {
             continue;
         }
 
-        // Mouse look
+        // Mouse look.
         t->yaw   -= mouse_delta.x * fp->sensitivity * fp->m_yaw;
         t->pitch += mouse_delta.y * fp->sensitivity * fp->m_pitch;
         if (t->pitch >  fp->pitch_clamp) t->pitch =  fp->pitch_clamp;
         if (t->pitch < -fp->pitch_clamp) t->pitch = -fp->pitch_clamp;
 
-        // Movement vectors in world space.
-        // Forward (xz only) follows yaw; up/down is world axis.
-        float yaw_rad = t->yaw * DEG2RAD;
-        Vector3 fwd_xz = { cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
-        Vector3 right_xz = { -sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
-        Vector3 world_up = { 0.0f, 1.0f, 0.0f };
-
-        float move_fwd = ((float)forward - (float)backward) * fp->run_speed * dt;
-        float move_rt  = ((float)left    - (float)right)    * fp->run_speed * dt;
-        float move_up  = ((float)up      - (float)down)     * fp->run_speed * dt;
-
-        t->position = Vector3Add(t->position, Vector3Scale(fwd_xz,  move_fwd));
-        t->position = Vector3Add(t->position, Vector3Scale(right_xz, move_rt));
-        t->position = Vector3Add(t->position, Vector3Scale(world_up, move_up));
-
-        apply_transform_to_camera(t, cam);
+        // If this entity has no c_player, refresh the camera matrix from
+        // c_transform here. Otherwise sys_player_update will do it with the
+        // eye-height offset applied.
+        int has_player = 0;
+        if (c_player_id < ECS_MAX_COMPONENTS) {
+            has_player = ecs_has(w, e, c_player_id);
+        }
+        if (!has_player) {
+            apply_transform_to_camera(t, cam);
+        }
     }
 }
 

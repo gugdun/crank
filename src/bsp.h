@@ -139,6 +139,17 @@ typedef struct {
 } __attribute__((packed)) bsp_model_lump;
 
 typedef struct {
+    uint32_t first_side;
+    uint32_t num_sides;
+    uint32_t contents;
+} __attribute__((packed)) bsp_brush;
+
+typedef struct {
+    uint16_t plane;
+    uint16_t texinfo;       // 0xFFFF = no texture
+} __attribute__((packed)) bsp_brush_side;
+
+typedef struct {
     bsp_header header;
 
     point3f *vertices;
@@ -156,6 +167,10 @@ typedef struct {
     bsp_model_lump *models;
     uint8_t *visibility;
 
+    bsp_brush *brushes;
+    bsp_brush_side *brush_sides;
+    uint16_t *leaf_brushes;
+
     uint32_t num_vertices;
     uint32_t num_edges;
     uint32_t num_face_edges;
@@ -171,6 +186,10 @@ typedef struct {
     uint32_t num_models;
     uint32_t visibility_size;
     uint32_t num_clusters;
+
+    uint32_t num_brushes;
+    uint32_t num_brush_sides;
+    uint32_t num_leaf_brushes;
 } bsp_model;
 
 const char *bsp_entity_get(const bsp_entity *e, const char *key);

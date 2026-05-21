@@ -2,6 +2,7 @@
 #define RES_MAP_H
 
 #include "bsp.h"
+#include "phys.h"
 #include "res_mesh.h"
 #include "vis.h"
 
@@ -15,6 +16,7 @@ typedef struct {
     const bsp_model *bsp;       // borrowed
     mesh_handle      mesh;      // resolves via the mesh manager passed to create
     vis_state       *vis;       // borrowed; per-frame visibility state
+    phys_world      *phys;      // borrowed; static collision world
     const char      *name;      // borrowed (manager-owned copy)
 } map_view;
 

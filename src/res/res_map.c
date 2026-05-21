@@ -2,6 +2,7 @@
 
 #include "bsp.h"
 #include "mesh.h"
+#include "phys.h"
 #include "res_mesh.h"
 #include "vis.h"
 
@@ -13,6 +14,7 @@ typedef struct {
     bsp_model  *bsp;        // owned
     mesh_handle mesh;       // mesh manager owns the mesh
     vis_state  *vis;        // owned
+    phys_world *phys;       // owned
     char       *name;       // owned
 } map_entry;
 
@@ -45,6 +47,10 @@ void res_map_destroy(res_map_mgr *m) {
         return;
     }
     for (uint32_t i = 0; i < m->count; i++) {
+        if (m->entries[i].phys != NULL) {
+            phys_destroy(m->entries[i].phys);
+            m->entries[i].phys = NULL;
+        }
         if (m->entries[i].vis != NULL) {
             vis_destroy(m->entries[i].vis);
             m->entries[i].vis = NULL;
@@ -113,8 +119,17 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
         return 0;
     }
 
+    phys_world *phys = phys_create(bsp);
+    if (phys == NULL) {
+        printf("res_map_load: failed to build physics world for %s\n", name);
+        vis_destroy(vis);
+        bsp_free(bsp);
+        return 0;
+    }
+
     if (m->count >= m->capacity) {
         if (!grow_entries(m)) {
+            phys_destroy(phys);
             vis_destroy(vis);
             bsp_free(bsp);
             // mesh stays in the mesh manager; cannot easily revoke
@@ -126,6 +141,7 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
     char *name_copy = calloc(1, name_len + 1);
     if (name_copy == NULL) {
         printf("res_map_load: failed to allocate name copy\n");
+        phys_destroy(phys);
         vis_destroy(vis);
         bsp_free(bsp);
         return 0;
@@ -136,6 +152,7 @@ map_handle res_map_load(res_map_mgr *m, const char *name) {
     m->entries[idx].bsp = bsp;
     m->entries[idx].mesh = mh;
     m->entries[idx].vis = vis;
+    m->entries[idx].phys = phys;
     m->entries[idx].name = name_copy;
     return idx + 1;
 }
@@ -151,6 +168,7 @@ int res_map_get(const res_map_mgr *m, map_handle h, map_view *out) {
     out->bsp = m->entries[idx].bsp;
     out->mesh = m->entries[idx].mesh;
     out->vis = m->entries[idx].vis;
+    out->phys = m->entries[idx].phys;
     out->name = m->entries[idx].name;
     return 1;
 }

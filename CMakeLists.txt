@@ -31,6 +31,7 @@ add_executable(${PROJECT_NAME}
     src/texture.c
     src/render.c
     src/vis.c
+    src/phys.c
     src/ecs/ecs.c
     src/ecs/entity.c
     src/res/res_map.c
@@ -38,6 +39,7 @@ add_executable(${PROJECT_NAME}
     src/res/res_texture.c
     src/sys/sys_fpcam.c
     src/sys/sys_map.c
+    src/sys/sys_player.c
     src/sys/sys_skybox.c
 )
 
