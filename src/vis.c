@@ -109,7 +109,9 @@ vis_state *vis_create(const bsp_model *bsp, const mesh *m) {
         }
     }
 
-    // Populate per-cluster face lists from leaves.
+    // Populate per-cluster face lists from leaves. The BSP node/leaf tree
+    // only describes model 0 (worldspawn); inline brush models (doors,
+    // elevators, water/glass volumes, etc.) are handled separately below.
     for (uint32_t li = 0; li < bsp->num_leaves; li++) {
         const bsp_leaf *leaf = &bsp->leaves[li];
         int32_t cluster = (int16_t) leaf->cluster;  // cluster is uint16_t on disk
@@ -137,6 +139,32 @@ vis_state *vis_create(const bsp_model *bsp, const mesh *m) {
                 return NULL;
             }
         }
+    }
+
+    // Add every face belonging to an inline brush model (models[1..N-1]) to
+    // the detail face list. Inline models are not reachable through the leaf
+    // tree, so they never appear in any PVS cluster's face list and would
+    // otherwise be invisible. Adding them to detail_faces makes them always-
+    // candidate; the per-face frustum test still culls them when off-screen.
+    uint32_t inline_face_count = 0;
+    for (uint32_t mi = 1; mi < bsp->num_models; mi++) {
+        const bsp_model_lump *bm = &bsp->models[mi];
+        if (bm->first_face < 0 || bm->num_faces <= 0) continue;
+        uint32_t first = (uint32_t) bm->first_face;
+        uint32_t end   = first + (uint32_t) bm->num_faces;
+        if (end > bsp->num_faces) end = bsp->num_faces;
+        for (uint32_t fi = first; fi < end; fi++) {
+            if (m->faces[fi].index_count == 0) continue;
+            if (!face_list_add_unique(&v->detail_faces, fi)) {
+                vis_destroy(v);
+                return NULL;
+            }
+            inline_face_count++;
+        }
+    }
+    if (bsp->num_models > 1) {
+        printf("vis_create: %u inline-model faces added to detail list (%u models)\n",
+               inline_face_count, bsp->num_models - 1);
     }
 
     return v;
