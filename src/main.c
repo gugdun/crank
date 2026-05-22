@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #define DEFAULT_SKY     "unit1_"
 #define SKY_PATH_PREFIX "env/"
@@ -250,6 +251,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    // Find player velocity component
+    ecs_component_id c_velocity_id = ecs_lookup(world, "c_velocity");
+    c_velocity *pv = ecs_get(world, player_e, c_velocity_id);
+
     while (!WindowShouldClose()) {
         float delta = GetFrameTime();
         sys_fpcam_update(world, delta);
@@ -258,12 +263,35 @@ int main(int argc, char *argv[]) {
         Camera cam = sys_fpcam_active(world);
 
         BeginDrawing();
-        ClearBackground(BLACK);
-        BeginMode3D(cam);
-            sys_skybox_render(world, texmgr, cam.position);
-            sys_map_render(world, mapmgr, meshmgr, cam.position);
-        EndMode3D();
-        DrawFPS(16, 16);
+            ClearBackground(BLACK);
+
+            BeginMode3D(cam);
+                sys_skybox_render(world, texmgr, cam.position);
+                sys_map_render(world, mapmgr, meshmgr, cam.position);
+            EndMode3D();
+        
+            const int size = 20;
+            const int offset = 16;
+            const Color color = LIME;
+            // DrawFPS(offset, offset);
+        
+            if (pv != NULL) {
+                // Calculate velocity vector length
+                float x = pv->velocity.x * pv->velocity.x;
+                // float y = pv->velocity.y * pv->velocity.y;
+                float z = pv->velocity.z * pv->velocity.z;
+                float vel = sqrt(x /*+ y */+ z);
+
+                // Convert velocity to string
+                char buf[32];
+                sprintf(buf, "%.1f", vel);
+
+                // Draw velocity in the bottom center of the screen
+                int len = MeasureText(buf, size);
+                int w = GetScreenWidth();
+                int h = GetScreenHeight();
+                DrawText(buf, (w - len) / 2, h - size - offset, size, color);
+            }   
         EndDrawing();
     }
 
