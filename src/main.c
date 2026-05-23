@@ -63,7 +63,7 @@ int main(int argc, char *argv[]) {
     int height = 720;
 
     InitWindow(width, height, "crank");
-    SetTargetFPS(400);
+    SetTargetFPS(0);
     DisableCursor();
 
     r_init();
@@ -255,10 +255,25 @@ int main(int argc, char *argv[]) {
     ecs_component_id c_velocity_id = ecs_lookup(world, "c_velocity");
     c_velocity *pv = ecs_get(world, player_e, c_velocity_id);
 
+    const float fixed_dt = 1.0f / 128.0f;
+    float accumulator = 0.0f;
+
     while (!WindowShouldClose()) {
         float delta = GetFrameTime();
+
+        if (delta > 0.25f)
+            delta = 0.25f;
+
+        accumulator += delta;
+
+        // input/camera every frame
         sys_fpcam_update(world, delta);
-        sys_player_update(world, view.phys, delta);
+
+        // fixed physics ticks
+        while (accumulator >= fixed_dt) {
+            sys_player_update(world, view.phys, fixed_dt);
+            accumulator -= fixed_dt;
+        }
 
         Camera cam = sys_fpcam_active(world);
 
@@ -273,7 +288,7 @@ int main(int argc, char *argv[]) {
             const int size = 20;
             const int offset = 16;
             const Color color = LIME;
-            // DrawFPS(offset, offset);
+            DrawFPS(offset, offset);
         
             if (pv != NULL) {
                 // Calculate velocity vector length
