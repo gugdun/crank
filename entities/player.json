@@ -10,6 +10,7 @@
             "projection": 0,
             "active": true
         },
+        "c_input": {},
         "c_fpcam": {
             "run_speed": 320.0,
             "sensitivity": 1.0,

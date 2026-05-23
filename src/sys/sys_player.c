@@ -1,9 +1,10 @@
 #include "sys_player.h"
+#include "sys_fpcam.h"
+#include "sys_input.h"
 
 #include "ecs/ecs.h"
 #include "phys.h"
 #include "sjson.h"
-#include "sys/sys_fpcam.h"
 #include "raylib.h"
 #include "raymath.h"
 
@@ -274,19 +275,12 @@ static void accelerate(Vector3 *vel, Vector3 wishdir, float wishspeed, float acc
 
 void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
     if (w == NULL || phys == NULL) return;
-    if (dt <= 0.0f) dt = 1.0f / 60.0f;
+    if (dt <= 0.0f) dt = 1.0f / 128.0f;
 
     ecs_component_id c_transform_id = ecs_lookup(w, "c_transform");
     ecs_component_id c_camera_id    = ecs_lookup(w, "c_camera");
+    ecs_component_id c_input_id     = ecs_lookup(w, "c_input");
     if (c_transform_id >= ECS_MAX_COMPONENTS) return;
-
-    int forward  = IsKeyDown(KEY_W);
-    int backward = IsKeyDown(KEY_S);
-    int left     = IsKeyDown(KEY_A);
-    int right    = IsKeyDown(KEY_D);
-    int jump     = IsKeyDown(KEY_SPACE);
-    int down     = IsKeyDown(KEY_LEFT_SHIFT);
-    int noclip_toggle = IsKeyPressed(KEY_F);
 
     ecs_iter it = ecs_query(w, g_c_player);
     ecs_entity e = ECS_INVALID;
@@ -294,11 +288,11 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
     while (ecs_iter_next(&it, &e, &data)) {
         c_player *pl = (c_player *) data;
         c_transform *t = ecs_get(w, e, c_transform_id);
-        if (t == NULL) continue;
         c_velocity *vc = ecs_get(w, e, g_c_velocity);
-        if (vc == NULL) continue;
+        c_input* in = ecs_get(w, e, c_input_id);
+        if (t == NULL || vc == NULL || in == NULL) continue;
 
-        if (noclip_toggle) {
+        if (in->noclip_down) {
             pl->noclip = !pl->noclip;
             vc->velocity = (Vector3){0, 0, 0};
         }
@@ -309,14 +303,12 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
         Vector3 fwd_xz   = (Vector3){ cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
         Vector3 right_xz = (Vector3){-sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
 
-        float in_fwd = (float)forward - (float)backward;
-        // Match sys_fpcam's original mapping: A pushes "right" (positive),
-        // D pushes "left" (negative). Keep it consistent with prior behaviour.
-        float in_rt  = (float)left    - (float)right;
+        float in_fwd = in->in_fwd;
+        float in_rt  = in->in_rt;
 
         if (pl->noclip) {
             // Fly: direct velocity from input, no physics.
-            float in_up = (float)jump - (float)down;
+            float in_up = in->in_up;
             Vector3 move = {0, 0, 0};
             move.x = fwd_xz.x * in_fwd + right_xz.x * in_rt;
             move.y = in_up;
@@ -382,7 +374,7 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
             }
 
             // Jump.
-            if (jump && pl->on_ground) {
+            if (in->jump_down && pl->on_ground) {
                 vc->velocity.y = pl->jump_speed;
                 pl->on_ground = 0;
             }

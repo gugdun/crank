@@ -1,4 +1,5 @@
 #include "sys_fpcam.h"
+#include "sys_input.h"
 
 #include "ecs/ecs.h"
 #include "raylib.h"
@@ -79,8 +80,9 @@ ecs_entity sys_fpcam_spawn(ecs_world *w, Vector3 position, float yaw_deg) {
     c_transform *t = ecs_add(w, e, g_c_transform);
     c_camera    *cam = ecs_add(w, e, g_c_camera);
     c_fpcam     *fp  = ecs_add(w, e, g_c_fpcam);
+    c_input     *in  = ecs_add(w, e, ecs_lookup(w, "c_input"));
 
-    if (t == NULL || cam == NULL || fp == NULL) {
+    if (t == NULL || cam == NULL || fp == NULL || in == NULL) {
         ecs_destroy(w, e);
         return ECS_INVALID;
     }
@@ -138,18 +140,12 @@ void sys_fpcam_update(ecs_world *w, float dt) {
 
     (void)dt;
 
-    // Global toggles (input-tied; lives with the camera controller).
-    if (IsKeyPressed(KEY_F11)) {
-        ToggleFullscreen();
-    }
-
-    Vector2 mouse_delta = GetMouseDelta();
-
     // Look only. Movement is owned by sys_player (which also overrides the
     // camera matrix with the player's eye position). Entities that have a
     // c_fpcam but no c_player still get their camera matrix rebuilt from
     // c_transform here, so the legacy "fly camera" entity still works.
     ecs_component_id c_player_id = ecs_lookup(w, "c_player");
+    ecs_component_id c_input_id  = ecs_lookup(w, "c_input");
 
     ecs_iter it = ecs_query(w, g_c_fpcam);
     ecs_entity e = ECS_INVALID;
@@ -158,13 +154,17 @@ void sys_fpcam_update(ecs_world *w, float dt) {
         c_fpcam *fp = (c_fpcam *) data;
         c_transform *t = ecs_get(w, e, g_c_transform);
         c_camera *cam = ecs_get(w, e, g_c_camera);
-        if (t == NULL || cam == NULL) {
-            continue;
+        c_input* in = ecs_get(w, e, c_input_id);
+        if (t == NULL || cam == NULL || in == NULL) continue;
+
+        // Global toggles (input-tied; lives with the camera controller).
+        if (in->fullscreen_pressed) {
+            ToggleFullscreen();
         }
 
         // Mouse look.
-        t->yaw   -= mouse_delta.x * fp->sensitivity * fp->m_yaw;
-        t->pitch += mouse_delta.y * fp->sensitivity * fp->m_pitch;
+        t->yaw   -= in->mouse_delta.x * fp->sensitivity * fp->m_yaw;
+        t->pitch += in->mouse_delta.y * fp->sensitivity * fp->m_pitch;
         if (t->pitch >  fp->pitch_clamp) t->pitch =  fp->pitch_clamp;
         if (t->pitch < -fp->pitch_clamp) t->pitch = -fp->pitch_clamp;
 

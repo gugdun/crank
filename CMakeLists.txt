@@ -49,6 +49,7 @@ add_executable(${PROJECT_NAME}
     src/res/res_mesh.c
     src/res/res_texture.c
 
+    src/sys/sys_input.c
     src/sys/sys_fpcam.c
     src/sys/sys_map.c
     src/sys/sys_player.c

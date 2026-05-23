@@ -9,6 +9,7 @@
 #include "res/res_mesh.h"
 #include "res/res_texture.h"
 #include "sjson.h"
+#include "sys/sys_input.h"
 #include "sys/sys_fpcam.h"
 #include "sys/sys_map.h"
 #include "sys/sys_player.h"
@@ -94,6 +95,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    sys_input_register(world);
     sys_fpcam_register(world);
     sys_map_register(world);
     sys_player_register(world);
@@ -267,6 +269,7 @@ int main(int argc, char *argv[]) {
         accumulator += delta;
 
         // input/camera every frame
+        sys_input_update(world);
         sys_fpcam_update(world, delta);
 
         // fixed physics ticks
