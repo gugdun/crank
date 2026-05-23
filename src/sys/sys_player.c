@@ -14,7 +14,7 @@
 static ecs_component_id g_c_player   = ECS_MAX_COMPONENTS;
 static ecs_component_id g_c_velocity = ECS_MAX_COMPONENTS;
 
-#define OVERCLIP        1.001f
+#define OVERCLIP        1.0001f
 #define MAX_CLIP_PLANES 5
 #define STOP_EPSILON    0.1f
 
@@ -63,6 +63,11 @@ static Vector3 clip_velocity(Vector3 in, Vector3 normal, float overbounce) {
     if (fabsf(out.y) < STOP_EPSILON) out.y = 0.0f;
     if (fabsf(out.z) < STOP_EPSILON) out.z = 0.0f;
     return out;
+}
+
+static Vector3 project_onto_plane(Vector3 v, Vector3 normal) {
+    float d = Vector3DotProduct(v, normal);
+    return Vector3Subtract(v, Vector3Scale(normal, d));
 }
 
 // Slide along contact planes (Q2 PM_SlideMove). Walks up to MAX_CLIP_PLANES
@@ -341,6 +346,11 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
             Vector3 wishvel = {0, 0, 0};
             wishvel.x = fwd_xz.x * in_fwd + right_xz.x * in_rt;
             wishvel.z = fwd_xz.z * in_fwd + right_xz.z * in_rt;
+
+            if (pl->on_ground && gt.plane_normal.y >= 0.7f) {
+                wishvel = project_onto_plane(wishvel, gt.plane_normal);
+            }
+
             float wishlen = sqrtf(wishvel.x * wishvel.x + wishvel.z * wishvel.z);
             Vector3 wishdir = {0, 0, 0};
             float wishspeed = 0.0f;
@@ -353,6 +363,10 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
             // Friction (ground only).
             if (pl->on_ground) {
                 apply_friction(pl, &vc->velocity, dt);
+            }
+
+            if (pl->on_ground && vc->velocity.y < 0.0f) {
+                vc->velocity.y = 0.0f;
             }
 
             // Accelerate.
@@ -377,6 +391,35 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
             step_slide_move(phys, &t->position, &vc->velocity,
                             pl->half_extents, PHYS_MASK_PLAYERSOLID,
                             pl->step_height, pl->on_ground, dt);
+
+            if (was_on_ground && vc->velocity.y <= 0.0f) {
+                Vector3 snap_start = t->position;
+                Vector3 snap_end = t->position;
+                snap_end.y -= 4.0f;
+
+                phys_trace snap_tr;
+
+                phys_trace_box(
+                    phys,
+                    snap_start,
+                    snap_end,
+                    pl->half_extents,
+                    PHYS_MASK_PLAYERSOLID,
+                    &snap_tr
+                );
+
+                if (!snap_tr.allsolid &&
+                    snap_tr.fraction < 1.0f &&
+                    snap_tr.plane_normal.y >= 0.7f)
+                {
+                    t->position = snap_tr.endpos;
+
+                    if (vc->velocity.y < 0.0f)
+                        vc->velocity.y = 0.0f;
+
+                    pl->on_ground = 1;
+                }
+            }
 
             // After moving, re-check ground so jump-next-frame works.
             ground_start = t->position;
