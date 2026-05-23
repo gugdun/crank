@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "packed.h"
+
 #define BSP_MAGIC        0x50534249
 #define BSP_VERSION      38
 
@@ -26,35 +28,35 @@
 #define BSP_AREAS        17
 #define BSP_AREA_PORTALS 18
 
-typedef struct {
+typedef PACKED_STRUCT {
     float x;
     float y;
     float z;
-} __attribute__((packed)) point3f;
+} END_PACKED point3f;
 
-typedef struct {
+typedef PACKED_STRUCT {
     int16_t x;
     int16_t y;
     int16_t z;
-} __attribute__((packed)) point3s;
+} END_PACKED point3s;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t offset;
     uint32_t length;
-} __attribute__((packed)) bsp_lump;
+} END_PACKED bsp_lump;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t magic;
     uint32_t version;
     bsp_lump lump[19];
-} __attribute__((packed)) bsp_header;
+} END_PACKED bsp_header;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint16_t v1;
     uint16_t v2;
-} __attribute__((packed)) bsp_edge;
+} END_PACKED bsp_edge;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint16_t plane;
     uint16_t plane_side;
     uint32_t first_edge;
@@ -62,15 +64,15 @@ typedef struct {
     uint16_t texture_info;
     uint8_t lightmap_styles[4];
     uint32_t lightmap_offset;
-} __attribute__((packed)) bsp_face;
+} END_PACKED bsp_face;
 
-typedef struct {
+typedef PACKED_STRUCT {
     point3f normal;
     float distance;
     uint32_t type;
-} __attribute__((packed)) bsp_plane;
+} END_PACKED bsp_plane;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t plane;
     int32_t front_child;
     int32_t back_child;
@@ -78,9 +80,9 @@ typedef struct {
     point3s bbox_max;
     uint16_t first_face;
     uint16_t num_faces;
-} __attribute__((packed)) bsp_node;
+} END_PACKED bsp_node;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t brush_or;
     uint16_t cluster;
     uint16_t area;
@@ -90,9 +92,9 @@ typedef struct {
     uint16_t num_leaf_faces;
     uint16_t first_leaf_brush;
     uint16_t num_leaf_brushes;
-} __attribute__((packed)) bsp_leaf;
+} END_PACKED bsp_leaf;
 
-typedef struct {
+typedef PACKED_STRUCT {
     point3f u_axis;
     float u_offset;
     point3f v_axis;
@@ -101,14 +103,14 @@ typedef struct {
     uint32_t value;
     char texture_name[32];
     uint32_t next_texinfo;
-} __attribute__((packed)) bsp_texinfo;
+} END_PACKED bsp_texinfo;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t pvs;
     uint32_t phs;
-} __attribute__((packed)) bsp_vis_offset;
+} END_PACKED bsp_vis_offset;
 
-typedef struct {
+typedef PACKED_STRUCT {
     char name[32];
     uint32_t width;
     uint32_t height;
@@ -117,7 +119,7 @@ typedef struct {
     uint32_t flags;
     uint32_t contents;
     uint32_t value;
-} __attribute__((packed)) wal_header;
+} END_PACKED wal_header;
 
 typedef struct {
     char *key;
@@ -129,25 +131,25 @@ typedef struct {
     uint32_t num_props;
 } bsp_entity;
 
-typedef struct {
+typedef PACKED_STRUCT {
     point3f bbox_min;
     point3f bbox_max;
     point3f origin;
     int32_t head_node;
     int32_t first_face;
     int32_t num_faces;
-} __attribute__((packed)) bsp_model_lump;
+} END_PACKED bsp_model_lump;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint32_t first_side;
     uint32_t num_sides;
     uint32_t contents;
-} __attribute__((packed)) bsp_brush;
+} END_PACKED bsp_brush;
 
-typedef struct {
+typedef PACKED_STRUCT {
     uint16_t plane;
     uint16_t texinfo;       // 0xFFFF = no texture
-} __attribute__((packed)) bsp_brush_side;
+} END_PACKED bsp_brush_side;
 
 typedef struct {
     bsp_header header;

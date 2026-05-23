@@ -92,13 +92,13 @@ static phys_aabb compute_brush_aabb(const phys_plane *planes, uint32_t num_plane
 
     // If any axis is still unbounded, widen to a very large but finite box so
     // the broadphase test never trivially rejects this brush.
-    const float HUGE = 65536.0f;
-    if (out.mins.x == -FLT_MAX) out.mins.x = -HUGE;
-    if (out.mins.y == -FLT_MAX) out.mins.y = -HUGE;
-    if (out.mins.z == -FLT_MAX) out.mins.z = -HUGE;
-    if (out.maxs.x ==  FLT_MAX) out.maxs.x =  HUGE;
-    if (out.maxs.y ==  FLT_MAX) out.maxs.y =  HUGE;
-    if (out.maxs.z ==  FLT_MAX) out.maxs.z =  HUGE;
+    const float huge = 65536.0f;
+    if (out.mins.x == -FLT_MAX) out.mins.x = -huge;
+    if (out.mins.y == -FLT_MAX) out.mins.y = -huge;
+    if (out.mins.z == -FLT_MAX) out.mins.z = -huge;
+    if (out.maxs.x ==  FLT_MAX) out.maxs.x =  huge;
+    if (out.maxs.y ==  FLT_MAX) out.maxs.y =  huge;
+    if (out.maxs.z ==  FLT_MAX) out.maxs.z =  huge;
     return out;
 }
 
