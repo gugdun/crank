@@ -1,6 +1,6 @@
 #include "sys_player.h"
 #include "sys_fpcam.h"
-#include "sys_input.h"
+#include "sys_usercmd.h"
 
 #include "ecs/ecs.h"
 #include "phys.h"
@@ -273,13 +273,12 @@ static void accelerate(Vector3 *vel, Vector3 wishdir, float wishspeed, float acc
     vel->z += accelspeed * wishdir.z;
 }
 
-void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
+void sys_player_update(ecs_world *w, const phys_world *phys) {
     if (w == NULL || phys == NULL) return;
-    if (dt <= 0.0f) dt = 1.0f / 128.0f;
 
-    ecs_component_id c_transform_id = ecs_lookup(w, "c_transform");
-    ecs_component_id c_camera_id    = ecs_lookup(w, "c_camera");
-    ecs_component_id c_input_id     = ecs_lookup(w, "c_input");
+    ecs_component_id c_transform_id     = ecs_lookup(w, "c_transform");
+    ecs_component_id c_camera_id        = ecs_lookup(w, "c_camera");
+    ecs_component_id c_usercmd_queue_id = ecs_lookup(w, "c_usercmd_queue");
     if (c_transform_id >= ECS_MAX_COMPONENTS) return;
 
     ecs_iter it = ecs_query(w, g_c_player);
@@ -289,26 +288,34 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
         c_player *pl = (c_player *) data;
         c_transform *t = ecs_get(w, e, c_transform_id);
         c_velocity *vc = ecs_get(w, e, g_c_velocity);
-        c_input* in = ecs_get(w, e, c_input_id);
-        if (t == NULL || vc == NULL || in == NULL) continue;
+        c_usercmd_queue *q = ecs_get(w, e, c_usercmd_queue_id);
+        if (t == NULL || vc == NULL || q == NULL) continue;
 
-        if (in->noclip_down) {
-            pl->noclip = !pl->noclip;
-            vc->velocity = (Vector3){0, 0, 0};
+        c_usercmd cmd;
+        uint16_t prev_buttons = q->last.buttons;
+        if (!sys_usercmd_consume(q, &cmd)) continue;
+
+        {
+            uint16_t prev_noclip = prev_buttons & CMD_BUTTON_NOCLIP;
+            uint16_t curr_noclip = cmd.buttons & CMD_BUTTON_NOCLIP;
+            if (curr_noclip && !prev_noclip) {
+                pl->noclip = !pl->noclip;
+                vc->velocity = (Vector3){0, 0, 0};
+            }
         }
 
         // Build movement basis from yaw (raylib y-up).
-        float yaw_rad = t->yaw * DEG2RAD;
+        float yaw_rad = cmd.yaw * DEG2RAD;
         // sys_fpcam_apply_transform_to_camera: forward at yaw=0 is (1, 0, 0).
         Vector3 fwd_xz   = (Vector3){ cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
         Vector3 right_xz = (Vector3){-sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
 
-        float in_fwd = in->in_fwd;
-        float in_rt  = in->in_rt;
+        float in_fwd = cmd.in_fwd;
+        float in_rt  = cmd.in_rt;
 
         if (pl->noclip) {
             // Fly: direct velocity from input, no physics.
-            float in_up = in->in_up;
+            float in_up = cmd.in_up;
             Vector3 move = {0, 0, 0};
             move.x = fwd_xz.x * in_fwd + right_xz.x * in_rt;
             move.y = in_up;
@@ -318,9 +325,9 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
                 move = Vector3Scale(move, 1.0f / len);
             }
             float speed = pl->max_speed;
-            t->position.x += move.x * speed * dt;
-            t->position.y += move.y * speed * dt;
-            t->position.z += move.z * speed * dt;
+            t->position.x += move.x * speed * cmd.dt_sec;
+            t->position.y += move.y * speed * cmd.dt_sec;
+            t->position.z += move.z * speed * cmd.dt_sec;
             vc->velocity = (Vector3){0, 0, 0};
             pl->on_ground = 0;
         } else {
@@ -354,7 +361,7 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
 
             // Friction (ground only).
             if (pl->on_ground) {
-                apply_friction(pl, &vc->velocity, dt);
+                apply_friction(pl, &vc->velocity, cmd.dt_sec);
             }
 
             if (pl->on_ground && vc->velocity.y < 0.0f) {
@@ -364,25 +371,29 @@ void sys_player_update(ecs_world *w, const phys_world *phys, float dt) {
             // Accelerate.
             if (pl->on_ground) {
                 vc->velocity.y = 0.0f;
-                accelerate(&vc->velocity, wishdir, wishspeed, pl->accelerate, dt);
+                accelerate(&vc->velocity, wishdir, wishspeed, pl->accelerate, cmd.dt_sec);
             } else {
                 // Air control: clamp the projection so air strafing works.
                 float airwishspeed = wishspeed;
                 if (airwishspeed > 30.0f) airwishspeed = 30.0f;
-                accelerate(&vc->velocity, wishdir, airwishspeed, pl->air_accelerate, dt);
-                vc->velocity.y -= pl->gravity * dt;
+                accelerate(&vc->velocity, wishdir, airwishspeed, pl->air_accelerate, cmd.dt_sec);
+                vc->velocity.y -= pl->gravity * cmd.dt_sec;
             }
 
             // Jump.
-            if (in->jump_down && pl->on_ground) {
-                vc->velocity.y = pl->jump_speed;
-                pl->on_ground = 0;
+            {
+                uint16_t prev_jump = prev_buttons & CMD_BUTTON_JUMP;
+                uint16_t curr_jump = cmd.buttons & CMD_BUTTON_JUMP;
+                if (curr_jump && pl->on_ground) {
+                    vc->velocity.y = pl->jump_speed;
+                    pl->on_ground = 0;
+                }
             }
 
             // Step-slide-move.
             step_slide_move(phys, &t->position, &vc->velocity,
                             pl->half_extents, PHYS_MASK_PLAYERSOLID,
-                            pl->step_height, pl->on_ground, dt);
+                            pl->step_height, pl->on_ground, cmd.dt_sec);
 
             if (was_on_ground && vc->velocity.y <= 0.0f) {
                 Vector3 snap_start = t->position;

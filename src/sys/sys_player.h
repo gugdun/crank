@@ -35,6 +35,6 @@ void sys_player_register(ecs_world *w);
 // Run physics + input on every entity that owns a c_player.
 // Writes c_transform.position and c_velocity.velocity. Refreshes any attached
 // c_camera so sys_fpcam_active returns the up-to-date camera matrix.
-void sys_player_update(ecs_world *w, const phys_world *phys, float dt);
+void sys_player_update(ecs_world *w, const phys_world *phys);
 
 #endif

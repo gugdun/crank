@@ -20,12 +20,14 @@ int main(int argc, char *argv[]) {
     // 2. InitWindow + SetTargetFPS + DisableCursor
     // 3. r_init + rlSetClipPlanes
     // 4. create resource managers: res_texture, res_mesh, res_map
-    // 5. create ecs world, register c_transform/c_camera/c_fpcam,
-    //    c_skybox, c_map via sys_*_register
+    // 5. create ecs world, register sys_input, sys_usercmd, sys_fpcam,
+    //    sys_player, sys_map, sys_skybox via sys_*_register
     // 6. res_map_load -> map_handle
-    // 7. spawn map / skybox / fpcam entities, then sys_map_apply_spawn
+    // 7. spawn entities, process BSP entities, configure skybox
     // 8. while (!WindowShouldClose()) {
-    //        sys_fpcam_update
+    //        sys_input_update (mouse + push usercmds)
+    //        sys_fpcam_update (look + fullscreen toggle)
+    //        while (fixed_accumulator) sys_player_update (physics, pops usercmds)
     //        BeginDrawing + BeginMode3D(sys_fpcam_active)
     //            sys_skybox_render
     //            sys_map_render
@@ -79,12 +81,14 @@ See [res.md](res.md).
 
 ```c
 ecs_world *world = ecs_world_create();
+sys_input_register(world);
+sys_usercmd_register(world);
 sys_fpcam_register(world);
 sys_map_register(world);
 sys_skybox_register(world);
 ```
 
-The three `_register` calls install the component pools used by the
+The `_register` calls install the component pools used by the
 respective systems. They must run before any `*_spawn`.
 
 See [ecs.md](ecs.md) and [sys.md](sys.md).
@@ -111,7 +115,17 @@ sys_map_apply_spawn(world, map_e, cam_e, sky_e, texmgr, mapmgr);
 ```c
 while (!WindowShouldClose()) {
     float dt = GetFrameTime();
-    sys_fpcam_update(world, dt);     // input + look + move
+    if (dt > 0.25f) dt = 0.25f;
+    accumulator += dt;
+
+    sys_input_update(world);                  // 1. mouse + push usercmds
+    sys_fpcam_update(world, dt);              // 2. look (yaw/pitch)
+
+    while (accumulator >= fixed_dt) {
+        sys_player_update(world, view.phys, fixed_dt);  // 3. physics (pops usercmds)
+        accumulator -= fixed_dt;
+    }
+
     Camera cam = sys_fpcam_active(world);
 
     BeginDrawing();
@@ -125,8 +139,13 @@ while (!WindowShouldClose()) {
 }
 ```
 
-`sys_fpcam_update` also handles the `F11` fullscreen toggle, since
-fullscreen is conceptually a player-controlled input.
+`sys_input_update` captures mouse delta and pushes one `c_usercmd` to
+each `c_usercmd_queue`. `sys_player_update` runs at fixed 128 Hz and
+pops one command per tick, performing edge detection on buttons (jump,
+noclip) at consumption time.
+
+`sys_fpcam_update` handles the `F11` fullscreen toggle via its own
+per-frame key-state edge detection.
 
 ## Cleanup order
 

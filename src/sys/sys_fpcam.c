@@ -1,5 +1,6 @@
 #include "sys_fpcam.h"
 #include "sys_input.h"
+#include "sys_usercmd.h"
 
 #include "ecs/ecs.h"
 #include "raylib.h"
@@ -81,8 +82,9 @@ ecs_entity sys_fpcam_spawn(ecs_world *w, Vector3 position, float yaw_deg) {
     c_camera    *cam = ecs_add(w, e, g_c_camera);
     c_fpcam     *fp  = ecs_add(w, e, g_c_fpcam);
     c_input     *in  = ecs_add(w, e, ecs_lookup(w, "c_input"));
+    void        *q   = ecs_add(w, e, ecs_lookup(w, "c_usercmd_queue"));
 
-    if (t == NULL || cam == NULL || fp == NULL || in == NULL) {
+    if (t == NULL || cam == NULL || fp == NULL || in == NULL || q == NULL) {
         ecs_destroy(w, e);
         return ECS_INVALID;
     }
@@ -158,7 +160,7 @@ void sys_fpcam_update(ecs_world *w, float dt) {
         if (t == NULL || cam == NULL || in == NULL) continue;
 
         // Global toggles (input-tied; lives with the camera controller).
-        if (in->fullscreen_pressed) {
+        if (IsKeyPressed(KEY_F11)) {
             ToggleFullscreen();
         }
 

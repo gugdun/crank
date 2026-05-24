@@ -10,10 +10,106 @@ Systems are dispatched in a fixed order from `main`.
 
 | File                            | Header                       |
 | ------------------------------- | ---------------------------- |
+| `src/sys/sys_input.c`           | `src/sys/sys_input.h`        |
+| `src/sys/sys_usercmd.c`         | `src/sys/sys_usercmd.h`      |
 | `src/sys/sys_fpcam.c`           | `src/sys/sys_fpcam.h`        |
 | `src/sys/sys_player.c`          | `src/sys/sys_player.h`       |
 | `src/sys/sys_skybox.c`          | `src/sys/sys_skybox.h`       |
 | `src/sys/sys_map.c`             | `src/sys/sys_map.h`          |
+
+## sys_input — per-frame input capture
+
+### Component
+
+```c
+typedef struct {
+    Vector2 mouse_delta;
+} c_input;
+```
+
+`c_input` carries per-frame data from `sys_input_update` to camera
+systems. It has no registered JSON reader; it is zeroed on creation and
+refreshed each frame. Movement and button data lives in `c_usercmd_queue`
+(see `sys_usercmd` below).
+
+### API
+
+```c
+void sys_input_register(ecs_world *w);
+void sys_input_update(ecs_world *w);
+```
+
+`sys_input_update` runs once per frame. It reads `GetMouseDelta()` and
+writes it to every `c_input`. Movement and button data is accumulated
+into `c_usercmd_queue` by `sys_usercmd_accumulate` (see below).
+
+## sys_usercmd — command slot for fixed-tick consumption
+
+### Component
+
+```c
+#define CMD_BUTTON_JUMP   (1u << 0)
+#define CMD_BUTTON_NOCLIP (1u << 1)
+
+typedef struct {
+    float    in_fwd;
+    float    in_rt;
+    float    in_up;
+    float    yaw;
+    float    pitch;
+    uint16_t buttons;
+    float    dt_sec;
+} c_usercmd;
+
+typedef struct {
+    c_usercmd current;
+    int       has_current;
+    c_usercmd last;
+    // builder
+    c_usercmd  pending;
+    uint16_t   pending_buttons;
+} c_usercmd_queue;
+```
+
+`c_usercmd_queue` is no longer a ring buffer. It holds a single
+pending-builder slot and one finalized `current` command per entity.
+This removes the variable latency that a growing/shrinking ring buffer
+introduces when frame rate differs from the fixed tick rate.
+
+Each `c_usercmd` now carries its own `dt_sec` and the absolute
+`yaw`/`pitch` at the moment the command was finalized, so every
+physics integration step is self-contained and deterministic.
+
+No JSON reader is registered — the queue is wholly runtime-managed.
+
+### API
+
+```c
+void sys_usercmd_register(ecs_world *w);
+void sys_usercmd_accumulate(ecs_world *w, float frame_dt);
+void sys_usercmd_finalize(ecs_world *w, float slice_dt);
+int  sys_usercmd_consume(c_usercmd_queue *q, c_usercmd *out);
+```
+
+`sys_usercmd_accumulate` (per-frame):
+- Reads raw key state via Raylib (`IsKeyDown`).
+- Overwrites `pending.in_fwd/in_rt/in_up` with the latest WASD/Shift/Space
+  axes.
+- ORs `pending_buttons` with the current jump / noclip bits so short
+  taps that fall between two accumulates are never lost.
+
+`sys_usercmd_finalize` (per-tick, inside the fixed-tick loop):
+- Builds a finalized `c_usercmd` from the pending axes, the accumulated
+  button bits, and the entity's current `c_transform.yaw/pitch`.
+- Sets `cmd.dt_sec = slice_dt`.
+- Stores it in `q->current` and sets `q->has_current = 1`.
+- Clears `pending_buttons` for the next slice.
+
+`sys_usercmd_consume` (per-tick, inside `sys_player_update`):
+- If `has_current` is set, copies the command to `*out`, updates
+  `q->last`, clears the flag, and returns `1`.
+- Otherwise returns `0`. The caller skips physics for this tick — no
+  stale command is replayed and no artificial zero-cmd is injected.
 
 ## sys_fpcam — first-person camera
 
@@ -116,28 +212,32 @@ Both components have a registered JSON reader; the player archetype
 
 ```c
 void sys_player_register(ecs_world *w);
-void sys_player_update(ecs_world *w, const phys_world *phys, float dt);
+void sys_player_update(ecs_world *w, const phys_world *phys);
 ```
 
-`sys_player_update` runs *after* `sys_fpcam_update` so it sees the new
-yaw/pitch. For every entity with `c_player` + `c_transform` +
-`c_velocity` it:
+`sys_player_update` runs inside the fixed-tick loop, *after*
+`sys_usercmd_finalize`. For every entity with `c_player` + `c_transform`
++ `c_velocity` + `c_usercmd_queue` it:
 
-1. Reads `W/A/S/D` and `SPACE` (jump). `F` toggles noclip.
-2. **noclip path**: direct velocity from input (with `SPACE`/`SHIFT` as
-   world-Y), skip physics.
-3. **physics path**:
-   - Ground-trace 2 units down; `on_ground = 1` iff hit normal Y ≥ 0.7.
-   - Apply friction on ground (Q2 `PM_Friction`).
-   - Accelerate horizontally toward `wishdir` at `accelerate` (ground)
-     or `air_accelerate` (air, clamped to 30 units/sec wishspeed).
-   - Apply gravity if airborne.
-   - Apply jump if `SPACE` pressed and on ground.
-   - `step_slide_move`: try the slide move flat; if on ground, also
-     try step-up (move up by `step_height`, slide, step back down) and
-     keep whichever ended further horizontally on a walkable surface.
-   - Re-check ground for the next frame.
-4. Refresh `c_camera.rl_camera` from the new transform + `eye_height`.
+1. Consumes one `c_usercmd` via `sys_usercmd_consume`. If none is
+   available the entity is skipped for this tick.
+2. Edge-detects `CMD_BUTTON_NOCLIP` (0→1 transition since the last
+   consumed command) to toggle noclip.
+3. **noclip path**: direct velocity from `cmd.in_fwd/in_rt/in_up`
+   (with `SPACE`/`SHIFT` as world-Y), skip physics. Uses `cmd.yaw` for
+   the movement basis.
+4. **physics path**:
+    - Ground-trace 2 units down; `on_ground = 1` iff hit normal Y ≥ 0.7.
+    - Apply friction on ground (Q2 `PM_Friction`).
+    - Accelerate horizontally toward `wishdir` at `accelerate` (ground)
+      or `air_accelerate` (air, clamped to 30 units/sec wishspeed).
+    - Apply gravity if airborne.
+    - Apply jump if `SPACE` pressed and on ground (auto-hop).
+    - `step_slide_move`: try the slide move flat; if on ground, also
+      try step-up (move up by `step_height`, slide, step back down) and
+      keep whichever ended further horizontally on a walkable surface.
+    - Re-check ground for the next tick.
+5. Refresh `c_camera.rl_camera` from the new transform + `eye_height`.
 
 The `slide_move` helper is the Quake II `PM_SlideMove` algorithm with
 up to four bumps. Velocity is clipped against contact planes with
@@ -271,12 +371,18 @@ which is why the const-pointer from the mesh manager is cast away here.
 single window/event loop:
 
 ```
-sys_fpcam_update(world, dt);                                # 1. look (yaw/pitch)
-sys_player_update(world, view.phys, dt);                    # 2. physics + move + camera matrix
-Camera cam = sys_fpcam_active(world);                       # 3. pick active camera
+sys_input_update(world);                                   # 1. mouse delta into c_input
+sys_fpcam_update(world, dt);                               # 2. look (yaw/pitch)
+sys_usercmd_accumulate(world, dt);                         # 3. buffer latest axes + buttons
+while (accumulator >= fixed_dt) {
+    sys_usercmd_finalize(world, fixed_dt);                 # 4. snapshot angles + dt
+    sys_player_update(world, view.phys);                 # 5. physics + move (consume cmd)
+    accumulator -= fixed_dt;
+}
+Camera cam = sys_fpcam_active(world);                      # 6. pick active camera
 BeginMode3D(cam);
-    sys_skybox_render(world, texmgr, cam.position);         # 4. sky first
-    sys_map_render(world, mapmgr, meshmgr, cam.position);   # 5. world (opaque + sorted trans)
+    sys_skybox_render(world, texmgr, cam.position);        # 7. sky first
+    sys_map_render(world, mapmgr, meshmgr, cam.position);  # 8. world (opaque + sorted trans)
 EndMode3D();
 ```
 

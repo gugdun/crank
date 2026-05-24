@@ -11,6 +11,7 @@
             "active": true
         },
         "c_input": {},
+        "c_usercmd_queue": {},
         "c_fpcam": {
             "run_speed": 320.0,
             "sensitivity": 1.0,

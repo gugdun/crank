@@ -50,6 +50,7 @@ add_executable(${PROJECT_NAME}
     src/res/res_texture.c
 
     src/sys/sys_input.c
+    src/sys/sys_usercmd.c
     src/sys/sys_fpcam.c
     src/sys/sys_map.c
     src/sys/sys_player.c

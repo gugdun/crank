@@ -10,6 +10,7 @@
 #include "res/res_texture.h"
 #include "sjson.h"
 #include "sys/sys_input.h"
+#include "sys/sys_usercmd.h"
 #include "sys/sys_fpcam.h"
 #include "sys/sys_map.h"
 #include "sys/sys_player.h"
@@ -55,7 +56,7 @@ static void load_skybox_sides(res_texture_mgr *texmgr,
 }
 
 int main(int argc, char *argv[]) {
-    const char *map_name = "base1";
+    const char *map_name = "c1a0";
     if (argc > 1) {
         map_name = argv[1];
     }
@@ -96,6 +97,7 @@ int main(int argc, char *argv[]) {
     }
 
     sys_input_register(world);
+    sys_usercmd_register(world);
     sys_fpcam_register(world);
     sys_map_register(world);
     sys_player_register(world);
@@ -271,10 +273,12 @@ int main(int argc, char *argv[]) {
         // input/camera every frame
         sys_input_update(world);
         sys_fpcam_update(world, delta);
+        sys_usercmd_accumulate(world, delta);
 
         // fixed physics ticks
         while (accumulator >= fixed_dt) {
-            sys_player_update(world, view.phys, fixed_dt);
+            sys_usercmd_finalize(world, fixed_dt);
+            sys_player_update(world, view.phys);
             accumulator -= fixed_dt;
         }
 
