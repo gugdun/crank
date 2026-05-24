@@ -349,7 +349,7 @@ int main(int argc, char *argv[]) {
                 float x = pv->velocity.x * pv->velocity.x;
                 // float y = pv->velocity.y * pv->velocity.y;
                 float z = pv->velocity.z * pv->velocity.z;
-                float vel = sqrt(x /*+ y */+ z);
+                float vel = sqrtf(x /*+ y */+ z);
 
                 // Convert velocity to string
                 char buf[32];
