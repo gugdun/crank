@@ -25,7 +25,9 @@ static void read_c_player(void *data, sjson_node *node) {
     if (p->half_extents.x == 0.0f && p->half_extents.y == 0.0f && p->half_extents.z == 0.0f) {
         p->half_extents = (Vector3){16.0f, 28.0f, 16.0f};
     }
-    p->eye_height     = sjson_get_float(node, "eye_height",     24.0f);
+    // Note: render-time eye_height lives on c_view (see sys_view.h),
+    // not on c_player. This keeps the simulation pose pure and lets the
+    // view system own all rendering-side offsets.
     p->step_height    = sjson_get_float(node, "step_height",    18.0f);
     p->accelerate     = sjson_get_float(node, "accelerate",     10.0f);
     p->air_accelerate = sjson_get_float(node, "air_accelerate", 1.0f);
@@ -277,7 +279,6 @@ void sys_player_update(ecs_world *w, const phys_world *phys) {
     if (w == NULL || phys == NULL) return;
 
     ecs_component_id c_transform_id     = ecs_lookup(w, "c_transform");
-    ecs_component_id c_camera_id        = ecs_lookup(w, "c_camera");
     ecs_component_id c_usercmd_queue_id = ecs_lookup(w, "c_usercmd_queue");
     if (c_transform_id >= ECS_MAX_COMPONENTS) return;
 
@@ -294,6 +295,22 @@ void sys_player_update(ecs_world *w, const phys_world *phys) {
         c_usercmd cmd;
         uint16_t prev_buttons = q->last.buttons;
         if (!sys_usercmd_consume(q, &cmd)) continue;
+
+        // Snapshot per-tick interpolation history *before* any integration
+        // or noclip translation. sys_view_update will lerp prev_* -> current
+        // by alpha = accumulator / fixed_dt to produce a smooth eye pose at
+        // render time. This runs on every tick so multi-tick frames stay
+        // continuous.
+        t->prev_position = t->position;
+        t->prev_yaw      = t->yaw;
+        t->prev_pitch    = t->pitch;
+
+        // The simulation samples its yaw/pitch from the user command, which
+        // sys_usercmd_finalize populated from c_view (frame-rate look). This
+        // keeps simulation orientation in lock-step with the latest look
+        // while leaving render orientation entirely to c_view.
+        t->yaw   = cmd.yaw;
+        t->pitch = cmd.pitch;
 
         {
             uint16_t prev_noclip = prev_buttons & CMD_BUTTON_NOCLIP;
@@ -434,26 +451,8 @@ void sys_player_update(ecs_world *w, const phys_world *phys) {
             (void)was_on_ground;
         }
 
-        // Refresh camera if attached so sys_fpcam_active sees the new pose.
-        if (c_camera_id < ECS_MAX_COMPONENTS) {
-            c_camera *cam = ecs_get(w, e, c_camera_id);
-            if (cam != NULL) {
-                float yaw_r = t->yaw * DEG2RAD;
-                float pitch_r = t->pitch * DEG2RAD;
-                float cp = cosf(pitch_r);
-                Vector3 eye = t->position;
-                eye.y += pl->eye_height;
-                Vector3 dir = (Vector3){
-                    cosf(yaw_r) * cp,
-                    -sinf(pitch_r),
-                    -sinf(yaw_r) * cp,
-                };
-                cam->rl_camera.position = eye;
-                cam->rl_camera.target   = Vector3Add(eye, dir);
-                cam->rl_camera.up       = (Vector3){0, 1, 0};
-                cam->rl_camera.fovy     = cam->fovy;
-                cam->rl_camera.projection = cam->projection;
-            }
-        }
+        // Camera matrix assembly is owned by sys_view_update (called once
+        // per frame, with interpolation). sys_player_update no longer
+        // touches c_camera.
     }
 }

@@ -21,13 +21,16 @@ int main(int argc, char *argv[]) {
     // 3. r_init + rlSetClipPlanes
     // 4. create resource managers: res_texture, res_mesh, res_map
     // 5. create ecs world, register sys_input, sys_usercmd, sys_fpcam,
-    //    sys_player, sys_map, sys_skybox via sys_*_register
+    //    sys_view, sys_player, sys_map, sys_skybox via sys_*_register
     // 6. res_map_load -> map_handle
     // 7. spawn entities, process BSP entities, configure skybox
     // 8. while (!WindowShouldClose()) {
-    //        sys_input_update (mouse + push usercmds)
-    //        sys_fpcam_update (look + fullscreen toggle)
-    //        while (fixed_accumulator) sys_player_update (physics, pops usercmds)
+    //        sys_input_update          (mouse delta into c_input)
+    //        sys_view_look             (mouse-look + F11; writes c_view)
+    //        sys_usercmd_accumulate    (buffer WASD/jump/noclip)
+    //        while (fixed_accumulator) sys_sim_tick (finalize + player_update)
+    //        alpha = accumulator / fixed_dt
+    //        sys_view_update(alpha)    (interpolate + build c_camera.rl_camera)
     //        BeginDrawing + BeginMode3D(sys_fpcam_active)
     //            sys_skybox_render
     //            sys_map_render
@@ -53,13 +56,17 @@ directory.
 
 ```c
 InitWindow(1280, 720, "crank");
-SetTargetFPS(300);
+SetTargetFPS(0);
 DisableCursor();
 ```
 
 The cursor is disabled so the OS pointer doesn't escape the window
-during mouselook. The target framerate is artificially high so the
-game loop runs as fast as the GPU allows.
+during mouselook. `SetTargetFPS(0)` lets the game loop run as fast as
+the GPU allows. Physics still runs at a fixed 128 Hz via the
+accumulator loop, and the camera position is interpolated between the
+previous and current physics-tick pose by
+`alpha = accumulator / fixed_dt`, so motion stays smooth at any render
+rate.
 
 ## Resource managers
 
@@ -84,12 +91,18 @@ ecs_world *world = ecs_world_create();
 sys_input_register(world);
 sys_usercmd_register(world);
 sys_fpcam_register(world);
+sys_view_register(world);
 sys_map_register(world);
+sys_player_register(world);
 sys_skybox_register(world);
 ```
 
 The `_register` calls install the component pools used by the
-respective systems. They must run before any `*_spawn`.
+respective systems. They must run before any `*_spawn`. `sys_view`
+must be registered after `sys_fpcam` because `c_view`'s registration
+order is independent but the player archetype JSON expects the pool to
+exist before `entity_spawn_from_file` runs. `sys_sim` does not register
+any components, so it has no `_register` function.
 
 See [ecs.md](ecs.md) and [sys.md](sys.md).
 
@@ -118,13 +131,17 @@ while (!WindowShouldClose()) {
     if (dt > 0.25f) dt = 0.25f;
     accumulator += dt;
 
-    sys_input_update(world);                  // 1. mouse + push usercmds
-    sys_fpcam_update(world, dt);              // 2. look (yaw/pitch)
+    sys_input_update(world);                  // 1. mouse delta into c_input
+    sys_view_look(world);                     // 2. mouse-look + F11 (writes c_view)
+    sys_usercmd_accumulate(world, dt);        // 3. buffer WASD/jump/noclip
 
     while (accumulator >= fixed_dt) {
-        sys_player_update(world, view.phys, fixed_dt);  // 3. physics (pops usercmds)
+        sys_sim_tick(world, view.phys, fixed_dt);    // 4. finalize + physics
         accumulator -= fixed_dt;
     }
+
+    float alpha = accumulator / fixed_dt;     // 5. interpolation factor
+    sys_view_update(world, alpha);            // 6. lerp + build c_camera.rl_camera
 
     Camera cam = sys_fpcam_active(world);
 
@@ -139,13 +156,24 @@ while (!WindowShouldClose()) {
 }
 ```
 
-`sys_input_update` captures mouse delta and pushes one `c_usercmd` to
-each `c_usercmd_queue`. `sys_player_update` runs at fixed 128 Hz and
-pops one command per tick, performing edge detection on buttons (jump,
-noclip) at consumption time.
+Steps 1, 2, 3, 5, and 6 run exactly once per frame. Step 4 runs zero or
+more times per frame to keep the simulation aligned with real time.
 
-`sys_fpcam_update` handles the `F11` fullscreen toggle via its own
-per-frame key-state edge detection.
+- `sys_input_update` writes the current mouse delta into every `c_input`.
+- `sys_view_look` updates `c_view.yaw / c_view.pitch` from the mouse delta
+  every frame and toggles fullscreen on `F11`. This is what makes look
+  feel render-rate-paced rather than physics-rate-paced.
+- `sys_usercmd_accumulate` writes the latest WASD/Shift/Space axes into
+  the pending slot of every `c_usercmd_queue` and ORs the jump / noclip
+  bits so short taps that fall between ticks are never lost.
+- `sys_sim_tick` finalises the user command (sampling `c_view.yaw/pitch`
+  into `cmd.yaw/pitch`) and runs `sys_player_update` for one fixed step.
+  The player controller snapshots `prev_position / prev_yaw / prev_pitch`
+  on every tick before integrating, so multi-tick frames remain smooth.
+- `sys_view_update(alpha)` is the *only* writer of `c_camera.rl_camera`.
+  It interpolates `prev_position -> position` by `alpha`, adds
+  `c_view.eye_height` on Y, and rebuilds the camera direction from
+  `c_view.yaw / c_view.pitch`.
 
 ## Cleanup order
 

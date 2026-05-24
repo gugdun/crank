@@ -10,6 +10,11 @@
             "projection": 0,
             "active": true
         },
+        "c_view": {
+            "yaw": 0.0,
+            "pitch": 0.0,
+            "eye_height": 24.0
+        },
         "c_input": {},
         "c_usercmd_queue": {},
         "c_fpcam": {
@@ -21,7 +26,6 @@
         },
         "c_player": {
             "half_extents": [16.0, 28.0, 16.0],
-            "eye_height": 24.0,
             "step_height": 18.0,
             "accelerate": 10.0,
             "air_accelerate": 70.0,

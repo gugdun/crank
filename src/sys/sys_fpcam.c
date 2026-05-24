@@ -1,6 +1,7 @@
 #include "sys_fpcam.h"
 #include "sys_input.h"
 #include "sys_usercmd.h"
+#include "sys_view.h"
 
 #include "ecs/ecs.h"
 #include "raylib.h"
@@ -19,6 +20,12 @@ static void read_c_transform(void *data, sjson_node *node) {
     sjson_get_floats((float *)&t->position, 3, node, "position");
     t->yaw   = sjson_get_float(node, "yaw", 0.0f);
     t->pitch = sjson_get_float(node, "pitch", 0.0f);
+    // Seed interpolation history to the spawn pose so the first rendered
+    // frame doesn't lerp from (0, 0, 0). main.c re-seeds these again
+    // after applying BSP origin/angle and spawn-point placement.
+    t->prev_position = t->position;
+    t->prev_yaw      = t->yaw;
+    t->prev_pitch    = t->pitch;
 }
 
 static void read_c_camera(void *data, sjson_node *node) {
@@ -47,26 +54,6 @@ void sys_fpcam_register(ecs_world *w) {
     g_c_fpcam     = ecs_register(w, "c_fpcam",     sizeof(c_fpcam),     NULL, read_c_fpcam);
 }
 
-static void apply_transform_to_camera(const c_transform *t, c_camera *cam) {
-    float yaw_rad = t->yaw * DEG2RAD;
-    float pitch_rad = t->pitch * DEG2RAD;
-    float cp = cosf(pitch_rad);
-
-    // yaw=0, pitch=0  ->  forward = (1, 0, 0) (matches original info_player_start angle code)
-    // yaw rotates around +Y; positive pitch tilts the view down.
-    Vector3 dir = {
-        cosf(yaw_rad) * cp,
-        -sinf(pitch_rad),
-        -sinf(yaw_rad) * cp,
-    };
-
-    cam->rl_camera.position = t->position;
-    cam->rl_camera.target   = Vector3Add(t->position, dir);
-    cam->rl_camera.up       = (Vector3){0.0f, 1.0f, 0.0f};
-    cam->rl_camera.fovy     = cam->fovy;
-    cam->rl_camera.projection = cam->projection;
-}
-
 ecs_entity sys_fpcam_spawn(ecs_world *w, Vector3 position, float yaw_deg) {
     if (w == NULL) {
         printf("sys_fpcam_spawn: w = NULL\n");
@@ -78,20 +65,28 @@ ecs_entity sys_fpcam_spawn(ecs_world *w, Vector3 position, float yaw_deg) {
         return ECS_INVALID;
     }
 
-    c_transform *t = ecs_add(w, e, g_c_transform);
+    ecs_component_id c_view_id    = ecs_lookup(w, "c_view");
+    ecs_component_id c_input_id   = ecs_lookup(w, "c_input");
+    ecs_component_id c_usercmd_id = ecs_lookup(w, "c_usercmd_queue");
+
+    c_transform *t   = ecs_add(w, e, g_c_transform);
     c_camera    *cam = ecs_add(w, e, g_c_camera);
     c_fpcam     *fp  = ecs_add(w, e, g_c_fpcam);
-    c_input     *in  = ecs_add(w, e, ecs_lookup(w, "c_input"));
-    void        *q   = ecs_add(w, e, ecs_lookup(w, "c_usercmd_queue"));
+    c_input     *in  = (c_input_id  < ECS_MAX_COMPONENTS) ? ecs_add(w, e, c_input_id)  : NULL;
+    void        *q   = (c_usercmd_id < ECS_MAX_COMPONENTS) ? ecs_add(w, e, c_usercmd_id) : NULL;
+    void        *v   = (c_view_id   < ECS_MAX_COMPONENTS) ? ecs_add(w, e, c_view_id)   : NULL;
 
-    if (t == NULL || cam == NULL || fp == NULL || in == NULL || q == NULL) {
+    if (t == NULL || cam == NULL || fp == NULL || in == NULL || q == NULL || v == NULL) {
         ecs_destroy(w, e);
         return ECS_INVALID;
     }
 
-    t->position = position;
-    t->yaw      = yaw_deg;
-    t->pitch    = 0.0f;
+    t->position      = position;
+    t->yaw           = yaw_deg;
+    t->pitch         = 0.0f;
+    t->prev_position = position;
+    t->prev_yaw      = yaw_deg;
+    t->prev_pitch    = 0.0f;
 
     cam->fovy = 90.0f;
     cam->projection = CAMERA_PERSPECTIVE;
@@ -103,7 +98,14 @@ ecs_entity sys_fpcam_spawn(ecs_world *w, Vector3 position, float yaw_deg) {
     fp->m_pitch     = 0.022f;
     fp->pitch_clamp = 89.0f;
 
-    apply_transform_to_camera(t, cam);
+    {
+        c_view *cv = (c_view *) v;
+        cv->yaw        = yaw_deg;
+        cv->pitch      = 0.0f;
+        cv->eye_height = 0.0f; // fly-cam default; player archetype overrides
+    }
+
+    // sys_view_update will fill cam->rl_camera on the first frame.
     return e;
 }
 
@@ -113,12 +115,8 @@ void sys_fpcam_set_position(ecs_world *w, ecs_entity e, Vector3 position) {
         printf("sys_fpcam_set_position: entity %u has no c_transform\n", e);
         return;
     }
-    t->position = position;
-
-    c_camera *cam = ecs_get(w, e, g_c_camera);
-    if (cam != NULL) {
-        apply_transform_to_camera(t, cam);
-    }
+    t->position      = position;
+    t->prev_position = position;
 }
 
 void sys_fpcam_set_yaw(ecs_world *w, ecs_entity e, float yaw_deg) {
@@ -127,58 +125,16 @@ void sys_fpcam_set_yaw(ecs_world *w, ecs_entity e, float yaw_deg) {
         printf("sys_fpcam_set_yaw: entity %u has no c_transform\n", e);
         return;
     }
-    t->yaw = yaw_deg;
+    t->yaw      = yaw_deg;
+    t->prev_yaw = yaw_deg;
 
-    c_camera *cam = ecs_get(w, e, g_c_camera);
-    if (cam != NULL) {
-        apply_transform_to_camera(t, cam);
-    }
-}
-
-void sys_fpcam_update(ecs_world *w, float dt) {
-    if (w == NULL) {
-        return;
-    }
-
-    (void)dt;
-
-    // Look only. Movement is owned by sys_player (which also overrides the
-    // camera matrix with the player's eye position). Entities that have a
-    // c_fpcam but no c_player still get their camera matrix rebuilt from
-    // c_transform here, so the legacy "fly camera" entity still works.
-    ecs_component_id c_player_id = ecs_lookup(w, "c_player");
-    ecs_component_id c_input_id  = ecs_lookup(w, "c_input");
-
-    ecs_iter it = ecs_query(w, g_c_fpcam);
-    ecs_entity e = ECS_INVALID;
-    void *data = NULL;
-    while (ecs_iter_next(&it, &e, &data)) {
-        c_fpcam *fp = (c_fpcam *) data;
-        c_transform *t = ecs_get(w, e, g_c_transform);
-        c_camera *cam = ecs_get(w, e, g_c_camera);
-        c_input* in = ecs_get(w, e, c_input_id);
-        if (t == NULL || cam == NULL || in == NULL) continue;
-
-        // Global toggles (input-tied; lives with the camera controller).
-        if (IsKeyPressed(KEY_F11)) {
-            ToggleFullscreen();
-        }
-
-        // Mouse look.
-        t->yaw   -= in->mouse_delta.x * fp->sensitivity * fp->m_yaw;
-        t->pitch += in->mouse_delta.y * fp->sensitivity * fp->m_pitch;
-        if (t->pitch >  fp->pitch_clamp) t->pitch =  fp->pitch_clamp;
-        if (t->pitch < -fp->pitch_clamp) t->pitch = -fp->pitch_clamp;
-
-        // If this entity has no c_player, refresh the camera matrix from
-        // c_transform here. Otherwise sys_player_update will do it with the
-        // eye-height offset applied.
-        int has_player = 0;
-        if (c_player_id < ECS_MAX_COMPONENTS) {
-            has_player = ecs_has(w, e, c_player_id);
-        }
-        if (!has_player) {
-            apply_transform_to_camera(t, cam);
+    // Keep c_view.yaw in sync if present, so the next sys_view_update
+    // renders the spawn orientation rather than the pre-spawn one.
+    ecs_component_id c_view_id = ecs_lookup(w, "c_view");
+    if (c_view_id < ECS_MAX_COMPONENTS) {
+        c_view *v = ecs_get(w, e, c_view_id);
+        if (v != NULL) {
+            v->yaw = yaw_deg;
         }
     }
 }

@@ -67,8 +67,10 @@ and present them with the camera each frame.
 | `res_texture`| `res/res_texture.c`, `res/res_texture.h`     | [res.md](res.md)             | Cache and own loaded `texture*` instances behind `tex_handle`.  |
 | `res_mesh`   | `res/res_mesh.c`, `res/res_mesh.h`           | [res.md](res.md)             | Own `mesh*` instances behind `mesh_handle`.                     |
 | `res_map`    | `res/res_map.c`, `res/res_map.h`             | [res.md](res.md)             | Load BSP + build mesh, expose `map_handle` views.               |
-| `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | Mouse-look + F11 toggle. Movement lives in `sys_player`.        |
-| `sys_player` | `sys/sys_player.c`, `sys/sys_player.h`       | [sys.md](sys.md)             | Quake-style first-person controller; physics + input + camera.  |
+| `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | Camera components (`c_transform`, `c_camera`, `c_fpcam`) and spawn helpers. No per-frame update. |
+| `sys_view`   | `sys/sys_view.c`, `sys/sys_view.h`           | [sys.md](sys.md)             | Per-frame mouse-look (`c_view`) + interpolated camera assembly. |
+| `sys_sim`    | `sys/sys_sim.c`, `sys/sys_sim.h`             | [sys.md](sys.md)             | Per-tick wrapper: usercmd_finalize + player_update.             |
+| `sys_player` | `sys/sys_player.c`, `sys/sys_player.h`       | [sys.md](sys.md)             | Quake-style first-person controller; physics + movement (no camera writes). |
 | `sys_skybox` | `sys/sys_skybox.c`, `sys/sys_skybox.h`       | [sys.md](sys.md)             | Skybox component + render.                                      |
 | `sys_map`    | `sys/sys_map.c`, `sys/sys_map.h`             | [sys.md](sys.md)             | Map component + render + generic BSP entity spawner.            |
 | `entity`     | `ecs/entity.c`, `ecs/entity.h`               | (see ecs.md)                | JSON archetype parser / ECS entity factory.                   |
@@ -100,7 +102,15 @@ sjson_create_context
 res_map_load
 sys_map_process_entities (spawns from JSON)
 post-process: attach map handle, load sky textures, spawn player
-... per-frame: sys_fpcam_update (look) + sys_player_update (physics) + sys_*_render ...
+... per-frame:
+        sys_input_update        (mouse delta into c_input)
+        sys_view_look           (mouse-look writes c_view; F11 toggle)
+        sys_usercmd_accumulate  (WASD/jump/noclip into pending)
+        while accumulator >= fixed_dt:
+            sys_sim_tick        (usercmd_finalize + player_update)
+        alpha = accumulator / fixed_dt
+        sys_view_update(alpha)  (interpolated eye -> c_camera.rl_camera)
+        sys_*_render            (with sys_fpcam_active's Camera)
 sjson_destroy_context
 ecs_world_destroy
 res_map_destroy
@@ -109,6 +119,14 @@ res_texture_destroy
 r_shutdown
 CloseWindow
 ```
+
+Look (yaw/pitch) is updated at render rate via `c_view`. Physics still
+runs at a fixed 128 Hz and writes the *simulation* pose into
+`c_transform.position / yaw / pitch`; `sys_player_update` also snapshots
+the pre-integration pose into `c_transform.prev_*` on every tick so
+`sys_view_update` can lerp the rendered eye position by
+`alpha = accumulator / fixed_dt` and avoid per-tick stutter at render
+rates above the simulation rate.
 
 All long-lived GPU resources (diffuse textures, lightmap atlas, vertex
 buffers, the lightmap shader) are created once at startup and destroyed

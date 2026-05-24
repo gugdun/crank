@@ -11,7 +11,6 @@
 // All units are in BSP/raylib world units (Quake II's "32 units = 1 m").
 typedef struct {
     Vector3 half_extents;       // AABB half-size, e.g. {16, 28, 16}
-    float   eye_height;         // offset added to position for camera Y
     float   step_height;        // max step-up
 
     float   accelerate;         // ground acceleration

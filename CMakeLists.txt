@@ -52,6 +52,8 @@ add_executable(${PROJECT_NAME}
     src/sys/sys_input.c
     src/sys/sys_usercmd.c
     src/sys/sys_fpcam.c
+    src/sys/sys_view.c
+    src/sys/sys_sim.c
     src/sys/sys_map.c
     src/sys/sys_player.c
     src/sys/sys_skybox.c

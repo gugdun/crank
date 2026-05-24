@@ -14,7 +14,9 @@
 #include "sys/sys_fpcam.h"
 #include "sys/sys_map.h"
 #include "sys/sys_player.h"
+#include "sys/sys_sim.h"
 #include "sys/sys_skybox.h"
+#include "sys/sys_view.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,6 +101,7 @@ int main(int argc, char *argv[]) {
     sys_input_register(world);
     sys_usercmd_register(world);
     sys_fpcam_register(world);
+    sys_view_register(world);
     sys_map_register(world);
     sys_player_register(world);
     sys_skybox_register(world);
@@ -222,6 +225,23 @@ int main(int argc, char *argv[]) {
         player_e = sys_fpcam_spawn(world, (Vector3){0.0f, 0.0f, 0.0f}, 0.0f);
     }
 
+    // Ensure the player has a c_view (needed by sys_view_look /
+    // sys_view_update). entities/player.json should declare one, but
+    // we fall back to a sane default so the engine still works if the
+    // asset hasn't been updated. Default eye_height matches the old
+    // c_player.eye_height default of 24 units.
+    if (player_e != ECS_INVALID) {
+        ecs_component_id c_view_id = ecs_lookup(world, "c_view");
+        if (c_view_id < ECS_MAX_COMPONENTS && !ecs_has(world, player_e, c_view_id)) {
+            c_view *vw = ecs_add(world, player_e, c_view_id);
+            if (vw != NULL) {
+                vw->yaw        = 0.0f;
+                vw->pitch      = 0.0f;
+                vw->eye_height = 24.0f;
+            }
+        }
+    }
+
     // Place player at the first untargeted spawn point, or fall back to
     // any spawn point if every one has a targetname.
     {
@@ -251,6 +271,25 @@ int main(int argc, char *argv[]) {
             c_transform *pt = ecs_get(world, player_e, c_transform_id);
             if (pt != NULL) {
                 *pt = chosen;
+                // Re-seed interpolation history so the first rendered frame
+                // doesn't visibly lerp from the pre-placement pose to the
+                // spawn point.
+                pt->prev_position = pt->position;
+                pt->prev_yaw      = pt->yaw;
+                pt->prev_pitch    = pt->pitch;
+
+                // Keep c_view.yaw/pitch in sync with the placed transform
+                // so the first sys_view_update renders the spawn-point
+                // orientation rather than the JSON default 0/0. This is
+                // safe even if the entity has no c_view (lookup misses).
+                ecs_component_id c_view_id = ecs_lookup(world, "c_view");
+                if (c_view_id < ECS_MAX_COMPONENTS) {
+                    c_view *vw = ecs_get(world, player_e, c_view_id);
+                    if (vw != NULL) {
+                        vw->yaw   = pt->yaw;
+                        vw->pitch = pt->pitch;
+                    }
+                }
             }
         }
     }
@@ -270,17 +309,25 @@ int main(int argc, char *argv[]) {
 
         accumulator += delta;
 
-        // input/camera every frame
+        // Per-frame: mouse input, view orientation (mouse-look), button
+        // accumulation. View look runs every frame so mouse-look feels
+        // crisp regardless of physics rate.
         sys_input_update(world);
-        sys_fpcam_update(world, delta);
+        sys_view_look(world);
         sys_usercmd_accumulate(world, delta);
 
-        // fixed physics ticks
+        // Fixed-rate simulation. sys_sim_tick wraps usercmd_finalize +
+        // player_update; the player controller snapshots prev_position/
+        // yaw/pitch on every tick for interpolation.
         while (accumulator >= fixed_dt) {
-            sys_usercmd_finalize(world, fixed_dt);
-            sys_player_update(world, view.phys);
+            sys_sim_tick(world, view.phys, fixed_dt);
             accumulator -= fixed_dt;
         }
+
+        // Render-time camera assembly: interpolate prev->current by alpha
+        // and build c_camera.rl_camera from c_view + interpolated eye.
+        float alpha = accumulator / fixed_dt;
+        sys_view_update(world, alpha);
 
         Camera cam = sys_fpcam_active(world);
 

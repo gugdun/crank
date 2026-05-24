@@ -2,6 +2,7 @@
 
 #include "ecs/ecs.h"
 #include "sys_fpcam.h"
+#include "sys_view.h"
 #include "raylib.h"
 
 #include <stdio.h>
@@ -48,6 +49,7 @@ void sys_usercmd_finalize(ecs_world *w, float slice_dt) {
     if (w == NULL) return;
 
     ecs_component_id c_transform_id = ecs_lookup(w, "c_transform");
+    ecs_component_id c_view_id      = ecs_lookup(w, "c_view");
 
     ecs_iter it = ecs_query(w, g_c_usercmd_queue);
     ecs_entity e;
@@ -59,7 +61,20 @@ void sys_usercmd_finalize(ecs_world *w, float slice_dt) {
         cmd.buttons = q->pending_buttons;
         cmd.dt_sec  = slice_dt;
 
-        if (c_transform_id < ECS_MAX_COMPONENTS) {
+        // Prefer c_view.yaw/pitch (frame-rate look) so the physics step
+        // uses the most recent mouse-look orientation. Fall back to
+        // c_transform.yaw/pitch for legacy entities that don't carry a
+        // c_view.
+        int view_set = 0;
+        if (c_view_id < ECS_MAX_COMPONENTS) {
+            c_view *v = ecs_get(w, e, c_view_id);
+            if (v != NULL) {
+                cmd.yaw   = v->yaw;
+                cmd.pitch = v->pitch;
+                view_set  = 1;
+            }
+        }
+        if (!view_set && c_transform_id < ECS_MAX_COMPONENTS) {
             c_transform *t = ecs_get(w, e, c_transform_id);
             if (t != NULL) {
                 cmd.yaw   = t->yaw;
