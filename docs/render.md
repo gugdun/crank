@@ -3,13 +3,6 @@
 The render module owns the lightmap shader and draws the world using
 the per-bucket index buffers prepared by the visibility module.
 
-## Files
-
-- `src/render.h` — `r_init`, `r_shutdown`, `r_draw_mesh`, `r_draw_sky`.
-- `src/render.c` — implementation.
-- `shaders/lightmap.vs` — vertex shader.
-- `shaders/lightmap.fs` — fragment shader.
-
 ## Public API
 
 ```c
@@ -28,15 +21,15 @@ void r_draw_sky(Vector3 cam_pos,
 `r_draw_mesh` assumes that `vis_update` was called on the same `mesh`
 immediately before. The visibility module rewrites every surface's
 dynamic IBO; `r_draw_mesh` simply binds and draws each surface that has
-`frame_index_count > 0`. `sys_map.c` enforces this order.
+`frame_index_count > 0`.
 
 ## Lifecycle
 
-`r_init` loads `shaders/lightmap.vs` + `shaders/lightmap.fs` via
-`LoadShader`. raylib auto-resolves the standard attribute names
+`r_init` loads the vertex and fragment shaders via `LoadShader`.
+raylib auto-resolves the standard attribute names
 (`vertexPosition`, `vertexTexCoord`, `vertexTexCoord2`) and the
-standard sampler uniforms (`texture0` → `SHADER_LOC_MAP_DIFFUSE`,
-`texture1` → `SHADER_LOC_MAP_SPECULAR`). It then resolves the two
+standard sampler uniforms (`texture0` -> `SHADER_LOC_MAP_DIFFUSE`,
+`texture1` -> `SHADER_LOC_MAP_SPECULAR`). It then resolves the two
 custom uniforms (`lightScale`, `surfaceAlpha`) and seeds them with
 their defaults.
 
@@ -46,14 +39,12 @@ their defaults.
 
 `r_draw_mesh(m, cam_pos)` runs the full world draw:
 
-1. Flush raylib's active batch (`rlDrawRenderBatchActive`) so any prior
-   immediate-mode geometry (e.g. the skybox) is submitted before we
-   change shader state.
-2. Bind the lightmap shader (`rlEnableShader`).
-3. Bind the shared VAO (`rlEnableVertexArray(m->rl_mesh.vaoId)`). This
-   wires positions / texcoords / texcoords2 in one call. The VAO was
-   set up by `UploadMesh` to bind attributes at the fixed
-   raylib-default locations (0, 1, 5), and `LoadShader` calls
+1. Flush raylib's active batch so any prior immediate-mode geometry
+   (e.g. the skybox) is submitted before we change shader state.
+2. Bind the lightmap shader.
+3. Bind the shared VAO. This wires positions / texcoords / texcoords2
+   in one call. The VAO was set up by `UploadMesh` to bind attributes
+   at the fixed raylib-default locations, and `LoadShader` calls
    `glBindAttribLocation` to match.
 4. Compute and upload the MVP uniform from `rlGetMatrixModelview()` *
    `rlGetMatrixProjection()` (model is identity).
@@ -73,20 +64,19 @@ raylib's `rlDrawVertexArrayElements` hard-codes the index type to
 `GL_UNSIGNED_SHORT`. Quake II world meshes routinely exceed 65536
 vertices after triangle-fanning, so the engine uses 32-bit indices and
 calls `glDrawElements` with `GL_UNSIGNED_INT`. The prototype is
-declared `extern` in `render.c`; the symbol resolves against the
+declared `extern` in the renderer; the symbol resolves against the
 OpenGL library that raylib transitively links.
 
 ### Transparent-surface centroid sort
 
 The visibility module computes a per-frame weighted centroid for each
 transparent surface based only on the faces it actually drew this
-frame. The renderer's scratch buffers (`g_trans_order`, `g_trans_dist`)
-are grown lazily; insertion-sort is used because the live count is
-small.
+frame. The renderer's scratch buffers are grown lazily; insertion-sort
+is used because the live count is small.
 
 ## Shader
 
-### Vertex (`shaders/lightmap.vs`)
+### Vertex shader
 
 ```glsl
 #version 330
@@ -103,7 +93,7 @@ void main() {
 }
 ```
 
-### Fragment (`shaders/lightmap.fs`)
+### Fragment shader
 
 ```glsl
 #version 330
@@ -122,7 +112,7 @@ void main() {
 ```
 
 `lightScale` is a global brightness multiplier (default 2.0; tune via
-`DEFAULT_LIGHT_SCALE` in `render.c`).
+`DEFAULT_LIGHT_SCALE` in the renderer).
 
 `surfaceAlpha` is a per-draw alpha multiplier set to 1.0 for the
 opaque pass and to the surface's `alpha` (0.33 or 0.66) for each

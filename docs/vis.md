@@ -6,12 +6,6 @@ visible-set (PVS) with frustum culling on per-face AABBs, and rewrites
 each `mesh_surface`'s dynamic index buffer with the surviving triangle
 indices.
 
-## Files
-
-- `src/vis.h` — opaque `vis_state` plus `vis_create`/`vis_destroy`/
-  `vis_update`.
-- `src/vis.c` — implementation.
-
 ## Public API
 
 ```c
@@ -38,12 +32,14 @@ the map is destroyed).
 3. Unions the face lists of every visible cluster into the
    `visible_face` bitset, then ORs in the "detail" face list (faces
    in leaves with cluster `0xFFFF`, which never appear in any PVS).
-4. Extracts the six frustum planes from `view_proj`.
-5. For every face whose bit is set AND whose AABB passes the frustum
+4. Also ORs in every face belonging to inline brush models (models
+   1..N-1), since those are not reachable through the leaf tree.
+5. Extracts the six frustum planes from `view_proj`.
+6. For every face whose bit is set AND whose AABB passes the frustum
    test, copies its static index span into the surface's
    `frame_indices` staging buffer; accumulates a weighted centroid
    for transparent surfaces along the way.
-6. Uploads each surface's `frame_indices` to the GPU via
+7. Uploads each surface's `frame_indices` to the GPU via
    `rlUpdateVertexBufferElements`.
 
 The return value is the number of faces that survived both PVS and
@@ -52,29 +48,6 @@ frustum culling (for telemetry).
 If the BSP has no visibility data, no valid cluster (camera outside
 the world), or PVS decompression fails, vis falls back to "draw every
 kept face, frustum-cull only".
-
-## Internal state
-
-```c
-struct vis_state {
-    face_list *cluster_faces;   // size = num_clusters; per-cluster face indices
-    face_list  detail_faces;    // faces reachable only from cluster -1 leaves
-    uint8_t   *pvs_bits;        // PVS scratch (one row, size = num_clusters/8)
-    uint8_t   *visible_face;    // bitset over bsp->num_faces
-    int32_t    last_cluster;    // for frame-to-frame cluster change detection
-    uint32_t   num_clusters;
-    uint32_t   bsp_num_faces;
-};
-```
-
-`face_list` is a flat `(uint32_t *, count)` pair of face indices. The
-per-cluster lists are deduplicated at build time (the same face can be
-referenced from multiple leaves in the same cluster) and sized to fit
-exactly; a typical cluster lists tens to a few hundred faces.
-
-Faces that the mesh builder discarded (utility textures, degenerate
-faces) are recognised by `mesh.faces[f].index_count == 0` and skipped
-during `vis_create`'s population step.
 
 ## Frustum extraction
 
@@ -112,7 +85,7 @@ boundary (the per-face frustum test still needs to run every frame).
 
 ## Failure modes
 
-- **No visibility lump**: `num_clusters == 0`, `cluster_faces` is
+- **No visibility lump**: `num_clusters == 0`, cluster face table is
   `NULL`, vis falls back to "all faces". Frustum culling still runs.
 - **Camera outside the world**: `bsp_find_leaf` returns `-1` or a
   leaf with cluster `0xFFFF`. Same fallback as above.

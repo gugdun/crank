@@ -5,32 +5,26 @@ resource managers, creates the ECS world, registers components, loads
 the map, spawns the initial entities, and drives the per-frame loop.
 
 After the ECS refactor, `main` contains no game logic of its own. All
-behaviour lives in the systems under `src/sys/` and the resources under
-`src/res/`.
-
-## File
-
-- `src/main.c`
+behaviour lives in the systems and the resource managers.
 
 ## Outline
 
-```c
+```
 int main(int argc, char *argv[]) {
     // 1. parse argv -> map name
     // 2. InitWindow + SetTargetFPS + DisableCursor
     // 3. r_init + rlSetClipPlanes
     // 4. create resource managers: res_texture, res_mesh, res_map
-    // 5. create ecs world, register sys_input, sys_usercmd, sys_fpcam,
-    //    sys_view, sys_player, sys_map, sys_skybox via sys_*_register
+    // 5. create ecs world, register all systems
     // 6. res_map_load -> map_handle
     // 7. spawn entities, process BSP entities, configure skybox
     // 8. while (!WindowShouldClose()) {
-    //        sys_input_update          (mouse delta into c_input)
-    //        sys_view_look             (mouse-look + F11; writes c_view)
-    //        sys_usercmd_accumulate    (buffer WASD/jump/noclip)
-    //        while (fixed_accumulator) sys_sim_tick (finalize + player_update)
+    //        sys_input_update
+    //        sys_view_look
+    //        sys_usercmd_accumulate
+    //        while (fixed_accumulator) sys_sim_tick
     //        alpha = accumulator / fixed_dt
-    //        sys_view_update(alpha)    (interpolate + build c_camera.rl_camera)
+    //        sys_view_update(alpha)
     //        BeginDrawing + BeginMode3D(sys_fpcam_active)
     //            sys_skybox_render
     //            sys_map_render
@@ -48,7 +42,7 @@ int main(int argc, char *argv[]) {
 crank [mapname]
 ```
 
-If `mapname` is omitted, defaults to `base1`. The actual file path is
+If `mapname` is omitted, defaults to `c1a0`. The actual file path is
 resolved by `bsp_load` to `maps/<mapname>.bsp` relative to the working
 directory.
 
@@ -82,46 +76,28 @@ res_map_mgr     *mapmgr  = res_map_create(meshmgr);
 `res_map_create` borrows the mesh manager so that loading a map can
 register the produced world mesh under a stable handle.
 
-See [res.md](res.md).
-
 ## World and systems
 
-```c
-ecs_world *world = ecs_world_create();
-sys_input_register(world);
-sys_usercmd_register(world);
-sys_fpcam_register(world);
-sys_view_register(world);
-sys_map_register(world);
-sys_player_register(world);
-sys_skybox_register(world);
-```
-
-The `_register` calls install the component pools used by the
-respective systems. They must run before any `*_spawn`. `sys_view`
-must be registered after `sys_fpcam` because `c_view`'s registration
-order is independent but the player archetype JSON expects the pool to
-exist before `entity_spawn_from_file` runs. `sys_sim` does not register
-any components, so it has no `_register` function.
-
-See [ecs.md](ecs.md) and [sys.md](sys.md).
+All systems are registered before any spawning happens. `sys_view`
+must be registered after `sys_fpcam` because the player archetype JSON
+expects the `c_view` pool to exist before `entity_spawn_from_file`
+runs. `sys_sim` does not register any components, so it has no
+`_register` function.
 
 ## Bootstrap entities
 
-```c
-map_handle map_h  = res_map_load(mapmgr, map_name);
-ecs_entity map_e  = sys_map_spawn(world, map_h);
-ecs_entity sky_e  = sys_skybox_spawn(world);
-ecs_entity cam_e  = sys_fpcam_spawn(world, (Vector3){0}, 0.0f);
-sys_map_apply_spawn(world, map_e, cam_e, sky_e, texmgr, mapmgr);
-```
+The bootstrap sequence:
 
-`sys_map_apply_spawn` reads the BSP entity lump and:
-
-- Configures the skybox component with six `tex_handle`s loaded via
-  `res_texture_load("env/<sky><suffix>")`.
-- Sets `c_transform.position` and `c_transform.yaw` on the fpcam entity
-  from `info_player_start.origin` and `.angle`.
+1. Spawn skybox from JSON, or fall back to hardcoded spawn.
+2. `res_map_load(map_name)` -> `map_handle`.
+3. `sys_map_process_entities` reads the BSP entity lump and spawns
+   entities from JSON archetypes.
+4. Post-processing attaches the map handle to the worldspawn entity,
+   configures skybox sides from the BSP `worldspawn.sky` key, and
+   places the player at the first untargeted spawn point.
+5. Spawn player from JSON, or fall back to `sys_fpcam_spawn`.
+6. Ensure the player has a `c_view` with a default `eye_height` of
+   24 units so the engine works even if the asset bundle is missing.
 
 ## Per-frame loop
 
@@ -133,7 +109,7 @@ while (!WindowShouldClose()) {
 
     sys_input_update(world);                  // 1. mouse delta into c_input
     sys_view_look(world);                     // 2. mouse-look + F11 (writes c_view)
-    sys_usercmd_accumulate(world, dt);        // 3. buffer WASD/jump/noclip
+    sys_usercmd_accumulate(world, dt);        // 3. buffer latest axes + buttons
 
     while (accumulator >= fixed_dt) {
         sys_sim_tick(world, view.phys, fixed_dt);    // 4. finalize + physics
@@ -161,15 +137,13 @@ more times per frame to keep the simulation aligned with real time.
 
 - `sys_input_update` writes the current mouse delta into every `c_input`.
 - `sys_view_look` updates `c_view.yaw / c_view.pitch` from the mouse delta
-  every frame and toggles fullscreen on `F11`. This is what makes look
-  feel render-rate-paced rather than physics-rate-paced.
+  every frame and toggles fullscreen on `F11`.
 - `sys_usercmd_accumulate` writes the latest WASD/Shift/Space axes into
   the pending slot of every `c_usercmd_queue` and ORs the jump / noclip
   bits so short taps that fall between ticks are never lost.
-- `sys_sim_tick` finalises the user command (sampling `c_view.yaw/pitch`
-  into `cmd.yaw/pitch`) and runs `sys_player_update` for one fixed step.
-  The player controller snapshots `prev_position / prev_yaw / prev_pitch`
-  on every tick before integrating, so multi-tick frames remain smooth.
+- `sys_sim_tick` finalises the user command and runs `sys_player_update`
+  for one fixed step. The player controller snapshots the pre-integration
+  pose on every tick so multi-tick frames remain smooth.
 - `sys_view_update(alpha)` is the *only* writer of `c_camera.rl_camera`.
   It interpolates `prev_position -> position` by `alpha`, adds
   `c_view.eye_height` on Y, and rebuilds the camera direction from

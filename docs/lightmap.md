@@ -4,12 +4,6 @@ The lightmap module turns the raw Quake II `BSP_LIGHTMAPS` byte buffer
 into a single GPU-friendly atlas texture, plus a per-face record of
 where each face's lightmap landed in the atlas.
 
-## Files
-
-- `src/lightmap.h` — public structs (`lm_face_info`, `lm_atlas`) and
-  the `lm_build` / `lm_free` API.
-- `src/lightmap.c` — implementation.
-
 ## Public API
 
 ```c
@@ -73,8 +67,8 @@ A face is considered **unlit** (and gets `has_lightmap = 0`, `lm_w = 1`,
 - `face.lightmap_offset + lm_w * lm_h * 3` would read past the end of
   the lightmap lump
 
-The Quake II surface-flag constants are defined as macros in
-`lightmap.h` (`SURF_SKY`, `SURF_WARP`, `SURF_NODRAW`, etc.).
+The Quake II surface-flag constants are defined as macros in the
+lightmap header (`SURF_SKY`, `SURF_WARP`, `SURF_NODRAW`, etc.).
 
 ### 2. Shelf packing
 

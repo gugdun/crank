@@ -1,6 +1,6 @@
 # resource managers
 
-The `res_*` managers centralize ownership of long-lived assets:
+The resource managers centralize ownership of long-lived assets:
 textures, world meshes, and BSP maps. Components store opaque uint32
 **handles** into these managers, not raw pointers, so they remain
 valid across manager reallocations.
@@ -8,14 +8,6 @@ valid across manager reallocations.
 Handle convention: `0` is always invalid. A live handle is
 `index + 1`, where `index` is the position in the manager's internal
 array.
-
-## Files
-
-| File                       | Header                  |
-| -------------------------- | ----------------------- |
-| `src/res/res_texture.c`    | `src/res/res_texture.h` |
-| `src/res/res_mesh.c`       | `src/res/res_mesh.h`    |
-| `src/res/res_map.c`        | `src/res/res_map.h`     |
 
 ## Lifetime and ordering
 
@@ -44,10 +36,6 @@ owned by `res_mesh`, so the call chain is:
 
 ```c
 typedef uint32_t tex_handle;
-typedef struct res_texture_mgr res_texture_mgr;
-
-res_texture_mgr *res_texture_create(void);
-void             res_texture_destroy(res_texture_mgr *m);
 
 tex_handle       res_texture_load(res_texture_mgr *m, const char *path);
 const texture   *res_texture_get(const res_texture_mgr *m, tex_handle h);
@@ -65,10 +53,6 @@ manager; the caller must not free.
 
 ```c
 typedef uint32_t mesh_handle;
-typedef struct res_mesh_mgr res_mesh_mgr;
-
-res_mesh_mgr *res_mesh_create(void);
-void          res_mesh_destroy(res_mesh_mgr *m);
 
 mesh_handle   res_mesh_adopt(res_mesh_mgr *m, mesh *mesh_obj);
 const mesh   *res_mesh_get(const res_mesh_mgr *m, mesh_handle h);
@@ -83,17 +67,14 @@ adopt produces a new handle.
 
 ```c
 typedef uint32_t map_handle;
-typedef struct res_map_mgr res_map_mgr;
 
 typedef struct {
     const bsp_model *bsp;     // borrowed
     mesh_handle      mesh;    // resolve via res_mesh_get
     vis_state       *vis;     // borrowed; pass to vis_update each frame
+    phys_world      *phys;    // borrowed; static collision world
     const char      *name;    // borrowed (manager-owned copy)
 } map_view;
-
-res_map_mgr *res_map_create(res_mesh_mgr *meshes);
-void         res_map_destroy(res_map_mgr *m);
 
 map_handle   res_map_load(res_map_mgr *m, const char *name);
 int          res_map_get(const res_map_mgr *m, map_handle h, map_view *out);
@@ -104,11 +85,12 @@ int          res_map_get(const res_map_mgr *m, map_handle h, map_view *out);
 1. `bsp_load(name)` -> `bsp_model *`.
 2. `mesh_from_bsp(bsp)` -> `mesh *`, then `res_mesh_adopt`.
 3. `vis_create(bsp, mesh)` -> `vis_state *`.
-4. Stores `{bsp, mesh_handle, vis_state, strdup(name)}` and returns
-   `index + 1`.
+4. `phys_create(bsp)` -> `phys_world *`.
+5. Stores `{bsp, mesh_handle, vis_state, phys_world, strdup(name)}` and
+   returns `index + 1`.
 
 If any step fails, all partial state is freed before returning `0`.
 
 `res_map_get` fills `*out` with a borrowed view (the strings,
-`bsp_model`, and `vis_state` remain owned by the manager). Returns `1`
-on success, `0` on invalid handle.
+`bsp_model`, `vis_state`, and `phys_world` remain owned by the manager).
+Returns `1` on success, `0` on invalid handle.

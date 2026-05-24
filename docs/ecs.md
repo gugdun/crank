@@ -1,14 +1,9 @@
 # ecs
 
-The `ecs` module is the entity-component-system core. It is intentionally
+The ECS module is the entity-component-system core. It is intentionally
 small: monotonic entity ids, one sparse-set pool per registered component
 type, and a single-component query iterator. Systems are plain functions
-that live elsewhere (see [sys.md](sys.md)) and call into `ecs.h`.
-
-## Files
-
-- `src/ecs/ecs.h`
-- `src/ecs/ecs.c`
+that live elsewhere and call into the ECS header.
 
 ## Public API
 
@@ -31,15 +26,14 @@ typedef struct ecs_iter {
 ```
 
 `ECS_INVALID` is the reserved entity id `0`. Pass it anywhere a value is
-expected when "no entity" is meaningful (e.g. optional arguments to
-`sys_map_apply_spawn`).
+expected when "no entity" is meaningful.
 
 `ECS_MAX_ENTITIES` (4096) caps the total number of `ecs_create` calls
 across the world's lifetime. Entity ids are **never recycled**;
 destroyed entities leave a hole in the alive bitmap.
 
 `ECS_MAX_COMPONENTS` (32) caps the number of `ecs_register` calls. Each
-registration allocates one fixed slot in `ecs_world::pools[]`.
+registration allocates one fixed slot in the world's pool table.
 
 ### World
 
@@ -66,10 +60,10 @@ marks `e` dead.
 
 ```c
 ecs_component_id ecs_register(ecs_world *w,
-                              const char *name,
-                              uint32_t stride,
-                              ecs_component_dtor dtor,      /* may be NULL */
-                              ecs_component_reader reader); /* may be NULL */
+                               const char *name,
+                               uint32_t stride,
+                               ecs_component_dtor dtor,      /* may be NULL */
+                               ecs_component_reader reader); /* may be NULL */
 
 void *ecs_add(ecs_world *w, ecs_entity e, ecs_component_id c);
 void *ecs_set(ecs_world *w, ecs_entity e, ecs_component_id c,
@@ -98,22 +92,6 @@ int      ecs_iter_next(ecs_iter *it, ecs_entity *out_entity, void **out_data);
 iteration; returns 0 when exhausted. For multi-component queries, use
 `ecs_get` on the secondary components from inside the loop.
 
-## Storage layout
-
-Each `ecs_pool` is a classic sparse set:
-
-- `dense` is a packed byte buffer of `count * stride` bytes. Iteration
-  walks `dense[0..count)` in insertion order (mutated by swap-and-pop on
-  removal).
-- `dense_to_entity[i]` maps `dense[i]` back to its owning entity.
-- `sparse[entity_id]` is the dense index for that entity, or an
-  internal `POOL_SLOT_EMPTY` sentinel (`UINT32_MAX`) when the entity is
-  not in the pool. The sentinel is distinct from `ECS_INVALID` (`0`)
-  because dense index `0` is a valid slot.
-
-This gives `O(1)` `add`/`get`/`remove` and `O(N)` cache-friendly
-iteration over a single component.
-
 ## Conventions for system authors
 
 - Cache the `ecs_component_id` returned by `ecs_register` in a
@@ -126,4 +104,4 @@ iteration over a single component.
 - Components must be POD. If a component needs to own heap memory or
   GPU resources, register a `dtor` and clean it up there.
 - Never store pointers into pool storage across calls that mutate the
-  same pool. `ecs_add` and `ecs_remove` may reallocate `dense`.
+  same pool. `ecs_add` and `ecs_remove` may reallocate the dense array.

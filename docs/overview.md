@@ -2,7 +2,7 @@
 
 Crank is a small 3D engine targeted at rendering single-player Quake II
 BSP maps. It uses a minimal Entity-Component-System (ECS) layer to
-organize behavior, centralized resource managers for GPU/CPU
+organize behaviour, centralized resource managers for GPU/CPU
 ownership, and raylib (OpenGL 3.3) for presentation.
 
 The runtime is essentially: load a BSP, build static GPU resources
@@ -12,34 +12,25 @@ and present them with the camera each frame.
 ## Architecture layers
 
 ```
-                                +----------------+
-   main.c (bootstrap)  ------>  | window / r_init|
-                                +-------+--------+
-                                        |
-        +-------------------------------+-------------------------------+
-        |                                                               |
-        v                                                               v
-+-------------------+                                          +-------------------+
-| Resource managers |                                          |    ECS world      |
-|  res_texture      | <----- borrowed by ----                  |  pools + entities |
-|  res_mesh         |                                          +---------+---------+
-|  res_map          |                                                    |
-+--------+----------+                                                    v
-         |                                                       +---------------+
-         | owns                                                  |   systems     |
-         v                                                       |  sys_fpcam    |
-   bsp_model / mesh / texture                                    |  sys_skybox   |
-   (low-level modules unchanged)                                 |  sys_map      |
-                                                                  +-------+-------+
-                                                                          |
-                                                                          v
-                                                                    r_draw_* (raylib/GL)
+main (bootstrap)  ------>  window / r_init
+                                 |
+         +-----------------------+-----------------------+
+         |                                               |
+         v                                               v
+  Resource managers                                ECS world
+  (texture, mesh, map)                             (pools + entities)
+         |                                               |
+         | owns                                          v
+         v                                          systems
+   bsp_model / mesh / texture                   (input, view,
+   (low-level modules)                          player, map, skybox)
+                                                        |
+                                                        v
+                                                  r_draw_* (raylib/GL)
 
-+----------------------------------------------------------------+
-| entity factory (entity.c)                                      |
-|  - parses JSON archetypes from entities/<classname>.json         |
-|  - spawns ECS entities with registered component readers        |
-+----------------------------------------------------------------+
+entity factory
+  - parses JSON archetypes from entities/<classname>.json
+  - spawns ECS entities with registered component readers
 ```
 
 - **Low-level modules** (`bsp`, `mesh`, `lightmap`, `texture`,
@@ -50,46 +41,44 @@ and present them with the camera each frame.
 - **ECS world** holds entities and per-component sparse-set pools.
   Components are POD structs.
 - **Systems** are plain functions that query the world, mutate
-  components, and call into resource managers + `render.h`.
+  components, and call into resource managers and the renderer.
 
 ## Modules at a glance
 
-| Module       | Source                                       | Doc                          | Responsibility                                                  |
-| ------------ | -------------------------------------------- | ---------------------------- | --------------------------------------------------------------- |
-| `bsp`        | `bsp.c`, `bsp.h`                             | [bsp.md](bsp.md)             | Parse a Quake II BSP file into in-memory lumps.                 |
-| `texture`    | `texture.c`, `texture.h`                     | [texture.md](texture.md)     | Load a PNG into a raylib `Texture2D` wrapper.                   |
-| `lightmap`   | `lightmap.c`, `lightmap.h`                   | [lightmap.md](lightmap.md)   | Compute face extents and pack lightmaps into one atlas.         |
-| `mesh`       | `mesh.c`, `mesh.h`                           | [mesh.md](mesh.md)           | Build a shared world VBO + per-bucket dynamic IBOs + face metadata. |
-| `vis`        | `vis.c`, `vis.h`                             | [vis.md](vis.md)             | PVS + frustum culling; rewrites per-bucket IBOs each frame.     |
-| `phys`       | `phys.c`, `phys.h`                           | [phys.md](phys.md)           | Static collision world built from BSP brushes; swept-AABB trace.|
-| `render`     | `render.c`, `render.h`                       | [render.md](render.md)       | Bind lightmap shader, draw the pre-culled IBOs, immediate-mode skybox. |
-| `ecs`        | `ecs/ecs.c`, `ecs/ecs.h`                     | [ecs.md](ecs.md)             | Entity ids, sparse-set component pools, query iterator.         |
-| `res_texture`| `res/res_texture.c`, `res/res_texture.h`     | [res.md](res.md)             | Cache and own loaded `texture*` instances behind `tex_handle`.  |
-| `res_mesh`   | `res/res_mesh.c`, `res/res_mesh.h`           | [res.md](res.md)             | Own `mesh*` instances behind `mesh_handle`.                     |
-| `res_map`    | `res/res_map.c`, `res/res_map.h`             | [res.md](res.md)             | Load BSP + build mesh, expose `map_handle` views.               |
-| `sys_fpcam`  | `sys/sys_fpcam.c`, `sys/sys_fpcam.h`         | [sys.md](sys.md)             | Camera components (`c_transform`, `c_camera`, `c_fpcam`) and spawn helpers. No per-frame update. |
-| `sys_view`   | `sys/sys_view.c`, `sys/sys_view.h`           | [sys.md](sys.md)             | Per-frame mouse-look (`c_view`) + interpolated camera assembly. |
-| `sys_sim`    | `sys/sys_sim.c`, `sys/sys_sim.h`             | [sys.md](sys.md)             | Per-tick wrapper: usercmd_finalize + player_update.             |
-| `sys_player` | `sys/sys_player.c`, `sys/sys_player.h`       | [sys.md](sys.md)             | Quake-style first-person controller; physics + movement (no camera writes). |
-| `sys_skybox` | `sys/sys_skybox.c`, `sys/sys_skybox.h`       | [sys.md](sys.md)             | Skybox component + render.                                      |
-| `sys_map`    | `sys/sys_map.c`, `sys/sys_map.h`             | [sys.md](sys.md)             | Map component + render + generic BSP entity spawner.            |
-| `entity`     | `ecs/entity.c`, `ecs/entity.h`               | (see ecs.md)                | JSON archetype parser / ECS entity factory.                   |
-| `main`       | `main.c`                                     | [main.md](main.md)           | Window init, manager + world setup, frame loop dispatch.        |
+| Module       | Responsibility                                                  |
+| ------------ | --------------------------------------------------------------- |
+| `bsp`        | Parse a Quake II BSP file into in-memory lumps.               |
+| `texture`    | Load a PNG into a raylib `Texture2D` wrapper.                 |
+| `lightmap`   | Compute face extents and pack lightmaps into one atlas.       |
+| `mesh`       | Build a shared world VBO + per-bucket dynamic IBOs + face metadata. |
+| `vis`        | PVS + frustum culling; rewrites per-bucket IBOs each frame.   |
+| `phys`       | Static collision world built from BSP brushes; swept-AABB trace.|
+| `render`     | Bind lightmap shader, draw the pre-culled IBOs, immediate-mode skybox. |
+| `ecs`        | Entity ids, sparse-set component pools, query iterator.       |
+| `res_texture`| Cache and own loaded texture instances behind handles.        |
+| `res_mesh`   | Own mesh instances behind handles.                            |
+| `res_map`    | Load BSP + build mesh, expose map views.                      |
+| `sys_input`  | Per-frame mouse delta into `c_input`.                         |
+| `sys_view`   | Per-frame mouse-look + interpolated camera assembly.            |
+| `sys_sim`    | Per-tick wrapper: usercmd finalize + player update.           |
+| `sys_player` | Quake-style first-person controller; physics + movement.      |
+| `sys_skybox` | Skybox component + render.                                     |
+| `sys_map`    | Map component + render + generic BSP entity spawner.           |
+| `entity`     | JSON archetype parser / ECS entity factory.                   |
+| `main`       | Window init, manager + world setup, frame loop dispatch.      |
 
 ## Coordinate systems
 
 There are two coordinate spaces in the engine:
 
 1. **BSP space** (`x` right, `y` forward, `z` up). All vertices,
-   planes, `texinfo` axes and lightmap math live in BSP space. Crank
-   computes lightmap UVs in this space.
+   planes, `texinfo` axes and lightmap math live in BSP space.
 2. **Engine / Raylib space** (`x` right, `y` up, `z` backward). After
    computing UVs the engine swaps each vertex as
    `(x, y, z) -> (x, z, -y)` before uploading to the GPU.
 
-`sys_map.c` applies the same swap to entity `origin` values via the
-file-static `parse_origin` helper, so player spawns line up with the
-world geometry.
+The map system applies the same swap to entity `origin` values, so
+player spawns line up with the world geometry.
 
 ## Lifetime
 
@@ -139,7 +128,7 @@ once at shutdown. The frame loop never allocates GPU memory.
 - The engine targets **OpenGL 3.3 / GLSL 330** through raylib's desktop
   backend.
 - The ECS is **deliberately minimal**: sparse-set pools, monotonic
-  entity ids (no recycling), explicit system dispatch from `main`. No
+  entity ids (no recycling), explicit system dispatch from main. No
   scheduler, no archetypes, no events.
 - Resource handles are **opaque integers** so components survive
   internal manager reallocations.

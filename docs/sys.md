@@ -1,6 +1,6 @@
 # systems
 
-The `sys_*` modules implement the engine's behaviors: the BSP-based world,
+The system modules implement the engine's behaviours: the BSP-based world,
 the skybox, and the first-person camera. Each system module owns one or
 more component types and a small set of public functions:
 `register`, `spawn`, and one or more update/render entry points.
@@ -13,19 +13,6 @@ finalisation run at a fixed 128 Hz from inside an accumulator while-loop
 in `main`. Render-time camera position is interpolated between the
 previous and current tick's simulation pose so motion stays smooth at any
 render rate.
-
-## Files
-
-| File                            | Header                       |
-| ------------------------------- | ---------------------------- |
-| `src/sys/sys_input.c`           | `src/sys/sys_input.h`        |
-| `src/sys/sys_usercmd.c`         | `src/sys/sys_usercmd.h`      |
-| `src/sys/sys_fpcam.c`           | `src/sys/sys_fpcam.h`        |
-| `src/sys/sys_view.c`            | `src/sys/sys_view.h`         |
-| `src/sys/sys_sim.c`             | `src/sys/sys_sim.h`          |
-| `src/sys/sys_player.c`          | `src/sys/sys_player.h`       |
-| `src/sys/sys_skybox.c`          | `src/sys/sys_skybox.h`       |
-| `src/sys/sys_map.c`             | `src/sys/sys_map.h`          |
 
 ## sys_input — per-frame input capture
 
@@ -228,7 +215,7 @@ look without ever blocking on it.
 
 A registered JSON reader populates `yaw`, `pitch`, and `eye_height`
 (default 24.0). The player archetype should declare `c_view` with the
-desired eye height; if it doesn't, `main.c` adds a fallback `c_view`
+desired eye height; if it doesn't, `main` adds a fallback `c_view`
 with `eye_height = 24` so the engine still runs against an unmodified
 asset bundle.
 
@@ -266,7 +253,7 @@ void sys_sim_tick(ecs_world *w, const phys_world *phys, float fixed_dt);
 ```
 
 Thin wrapper: calls `sys_usercmd_finalize(w, fixed_dt)` then
-`sys_player_update(w, phys)`. `main.c` invokes it once per accumulated
+`sys_player_update(w, phys)`. `main` invokes it once per accumulated
 fixed step. Per-tick interpolation history is captured inside
 `sys_player_update` so multi-tick frames stay continuous.
 
@@ -298,7 +285,7 @@ typedef struct {
 ```
 
 Both components have a registered JSON reader; the player archetype
-(`entities/player.json`) sets every field.
+sets every field.
 
 ### API
 
@@ -411,16 +398,16 @@ filled in later by `sys_skybox_set_sides`.
 void       sys_skybox_register(ecs_world *w);
 ecs_entity sys_skybox_spawn(ecs_world *w);
 void       sys_skybox_set_sides(ecs_world *w, ecs_entity e,
-                                tex_handle ft, tex_handle bk,
-                                tex_handle lf, tex_handle rt,
-                                tex_handle up, tex_handle dn);
+                                 tex_handle ft, tex_handle bk,
+                                 tex_handle lf, tex_handle rt,
+                                 tex_handle up, tex_handle dn);
 void       sys_skybox_render(ecs_world *w,
-                             const res_texture_mgr *texmgr,
-                             Vector3 cam_pos);
+                              const res_texture_mgr *texmgr,
+                              Vector3 cam_pos);
 ```
 
 `sys_skybox_spawn` creates an entity with zeroed handles. Sides are
-filled in later (typically by `main.c` after reading the BSP worldspawn).
+filled in later (typically by `main` after reading the BSP worldspawn).
 
 `sys_skybox_render` resolves each `tex_handle` to an OpenGL id via
 `res_texture_get` and calls `r_draw_sky`. If any side is missing the
@@ -466,9 +453,9 @@ int        sys_map_process_entities(ecs_world *w,
                                       const bsp_model *bsp,
                                       sjson_context *sctx);
 void       sys_map_render(ecs_world *w,
-                          res_map_mgr *mapmgr,
-                          res_mesh_mgr *meshmgr,
-                          Vector3 cam_pos);
+                           res_map_mgr *mapmgr,
+                           res_mesh_mgr *meshmgr,
+                           Vector3 cam_pos);
 ```
 
 `sys_map_spawn` is a convenience function for engine-internal map
@@ -488,12 +475,12 @@ as long as a matching JSON archetype is provided.
 
 `sys_map_render` iterates every `c_map`, resolves the map view (which
 exposes the BSP, the mesh, and the visibility state), captures the
-current view-projection matrix from `rlGetMatrixModelview()` *
-`rlGetMatrixProjection()`, calls `vis_update` to rebuild the per-bucket
-IBOs for the visible/in-frustum subset of faces, and then calls
-`r_draw_mesh`. Multiple map entities are supported but unused by the
-current bootstrap. The `vis_update` call mutates per-surface IBO state,
-which is why the const-pointer from the mesh manager is cast away here.
+current view-projection matrix from raylib's active 3D mode, calls
+`vis_update` to rebuild the per-bucket IBOs for the visible/in-frustum
+subset of faces, and then calls `r_draw_mesh`. Multiple map entities are
+supported but unused by the current bootstrap. The `vis_update` call
+mutates per-surface IBO state, which is why the const-pointer from the
+mesh manager is cast away here.
 
 ## Dispatch order
 

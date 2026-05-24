@@ -4,12 +4,6 @@ Static collision world built from the Quake II BSP brush lumps, plus a
 swept-AABB trace primitive that the player controller (and any future
 movable body) uses to move through the level.
 
-## Files
-
-- `src/phys.h` — public API: `phys_world`, `phys_trace`, content-flag
-  macros, `phys_create` / `phys_destroy` / `phys_trace_box`.
-- `src/phys.c` — implementation.
-
 ## Public API
 
 ```c

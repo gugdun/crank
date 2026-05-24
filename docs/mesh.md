@@ -4,12 +4,6 @@ The mesh module turns a `bsp_model` into a single GPU vertex buffer plus
 a collection of per-bucket index buffers, with face-level metadata used
 by the visibility system to decide which triangles to actually draw.
 
-## Files
-
-- `src/mesh.h` — `mesh_vertex`, `mesh_face_info`, `mesh_surface`, `mesh`
-  structs and the `mesh_from_bsp` / `mesh_free` API.
-- `src/mesh.c` — implementation.
-
 ## Public API
 
 ```c
@@ -20,7 +14,7 @@ typedef struct {
 } mesh_vertex;
 
 typedef struct {
-    uint32_t surface_index;   // index into mesh.surfaces or mesh.trans_surfaces
+    uint32_t surface_index;   // index into opaque or transparent surfaces
     uint32_t first_index;     // offset into surface->all_indices
     uint32_t index_count;     // (num_face_vertices - 2) * 3; 0 if face was skipped
     Vector3  bbox_min;        // AABB in raylib (y-up) space, for frustum culling
@@ -31,9 +25,9 @@ typedef struct {
 } mesh_face_info;
 
 typedef struct {
-    uint32_t  texture_id;
-    float     alpha;          // 1.0 opaque, 0.33 TRANS33, 0.66 TRANS66
-    Vector3   centroid;       // static all-faces centroid (fallback for sort)
+    uint32_t texture_id;
+    float    alpha;           // 1.0 opaque, 0.33 TRANS33, 0.66 TRANS66
+    Vector3  centroid;        // static all-faces centroid (fallback for sort)
 
     uint32_t *all_indices;
     uint32_t  all_index_count;
@@ -46,9 +40,9 @@ typedef struct {
 } mesh_surface;
 
 typedef struct {
-    mesh_vertex    *vertices;      // CPU-side copy of the shared vertex buffer
+    mesh_vertex    *vertices;
     uint32_t        vertex_count;
-    Mesh            rl_mesh;       // raylib upload (positions, texcoords, texcoords2)
+    Mesh            rl_mesh;
     int             uploaded;
 
     mesh_surface   *surfaces;
@@ -133,7 +127,7 @@ share a bucket: they need different `surfaceAlpha` uniforms.
 
 ## Diffuse UV computation
 
-```c
+```
 u = (p . texinfo.u_axis + texinfo.u_offset) / texture_width
 v = (p . texinfo.v_axis + texinfo.v_offset) / texture_height
 ```
@@ -186,7 +180,7 @@ the camera position before calling `bsp_find_leaf`.
 ## Per-frame interaction with vis
 
 The mesh module never touches the IBOs after build. Per-frame index
-buffer regeneration is the job of `vis_update` in `vis.c`:
+buffer regeneration is the job of `vis_update`:
 
 1. `vis_update` resets every surface's `frame_index_count` to 0.
 2. For each visible face that passes frustum culling, it appends
@@ -202,10 +196,10 @@ appropriate texture bound.
 ## Fallback texture
 
 If a face references a texture that fails to load (missing file, path
-too long, allocation failure), `ensure_fallback_texture` synthesises a
-32x32 magenta/black checkerboard, registers it under the synthetic
-path `__fallback__`, and returns its index. Subsequent missing
-textures reuse the same fallback.
+too long, allocation failure), the builder synthesises a 32x32
+magenta/black checkerboard, registers it under the synthetic path
+`__fallback__`, and returns its index. Subsequent missing textures reuse
+the same fallback.
 
 ## Cleanup
 

@@ -6,44 +6,15 @@ repository. Human contributors should also follow these rules.
 ## Project at a glance
 
 Crank is a Quake-II-BSP-based 3D engine written in C11, built with CMake,
-and rendered through Raylib (which is fetched from GitHub via
-`FetchContent`). The engine loads a BSP file, builds a single static world
-mesh and lightmap atlas, and renders the result with a custom GLSL shader
-that multiplies a diffuse texture by a lightmap.
+and rendered through Raylib (fetched from GitHub via `FetchContent`).
+It loads a BSP file, builds static GPU resources (world mesh, lightmap
+atlas), and renders with a custom GLSL shader. The runtime uses a minimal
+Entity-Component-System (ECS) layer, resource managers that own long-lived
+assets behind opaque handles, and systems dispatched from the main loop.
 
-The project is **proprietary**. See `LICENSE`. Never relicense, never
-suggest open-source headers in source files, never add SPDX identifiers
-that would imply an open-source license.
-
-## Repository structure
-
-```
-crank/
-  src/
-    main.c        Entry point, game loop, camera, entity reading
-    bsp.c         BSP file loader (header, lumps, entities)
-    bsp.h
-    mesh.c        World mesh builder, surface grouping, GPU upload
-    mesh.h
-    lightmap.c    Lightmap atlas builder (extents, packing, blitting)
-    lightmap.h
-    render.c      Shader-based world drawing, immediate-mode skybox
-    render.h
-    texture.c     PNG texture loader (raylib wrapper)
-    texture.h
-  shaders/
-    lightmap.vs   Vertex shader (forwards two UV sets)
-    lightmap.fs   Fragment shader (diffuse * lightmap * lightScale)
-  docs/
-    *.md          Per-module reference documents
-  CMakeLists.txt
-  README.md
-  AGENTS.md
-  LICENSE
-```
-
-Assets (`maps/`, `textures/`, `env/`) are runtime data and are NOT
-committed. Do not add binary game assets to the repo.
+The project is licensed under the **GNU General Public License v2 or later**.
+See the `LICENSE` file at the repository root. All source files carry the
+standard GPL header. Do not remove or replace these headers.
 
 ## Build and run
 
@@ -74,7 +45,8 @@ step.
 
 ### File organisation
 
-- Each module is a `.c`/`.h` pair in `src/`.
+- Each low-level module is a `.c`/`.h` pair. ECS-related code lives
+  under `ecs/`, systems under `sys/`, and resource managers under `res/`.
 - Header includes go in this order, each group separated by a blank line:
   1. The module's own header (in the `.c` file).
   2. Headers from this project.
@@ -146,12 +118,11 @@ step.
 - Coordinate convention: BSP uses `(x, y, z)` with `z` up. Engine
   remaps to raylib's `(x, y, z)` with `y` up via `(x, z, -y)` swap.
   Lightmap UVs are computed in pre-swap BSP coordinates because they
-  derive from `texinfo.u_axis / v_axis`, which are in BSP space. See
-  `mesh.c:compute_lightmap_uv` for the canonical pattern.
+  derive from `texinfo.u_axis / v_axis`, which are in BSP space.
 
 ### BSP-specific
 
-- All BSP structs in `bsp.h` are `__attribute__((packed))` and must
+- All BSP structs in `bsp.h` are packed via `PACKED_STRUCT` and must
   match the on-disk layout byte-for-byte. **Never reorder fields, never
   add fields, never change types** in those structs without verifying
   against the Quake II format spec.
@@ -160,15 +131,32 @@ step.
 - New lumps should be loaded through `bsp_read_lump` and exposed on the
   `bsp_model` struct alongside a corresponding count/size field.
 
+## Architecture conventions
+
+- **ECS components** are POD structs. If a component owns heap memory
+  or GPU resources, register a destructor with `ecs_register`.
+- **Resource handles** are opaque integers (`tex_handle`, `mesh_handle`,
+  `map_handle`). Components store handles, never raw pointers, so they
+  survive internal manager reallocations.
+- **Systems** are plain functions dispatched in a fixed order from the
+  main loop. There is no scheduler.
+- **JSON entity archetypes** live in the `entities/` runtime directory.
+  Each file is named `<classname>.json` and defines the components that
+  make up that entity type. When a map is loaded, every entity in the
+  BSP entity lump is matched to a JSON file by its `classname` and
+  spawned into the ECS world.
+
 ## Testing and verification
 
 There is no automated test suite. Verification is manual:
 
 1. `cmake --build build` must complete with no warnings or errors.
-2. Run `./crank base1` (or another known map). The world should render
-   with the skybox and lightmap-modulated textures.
+2. Run `./crank <known_map>`. The world should render with the skybox
+   and lightmap-modulated textures.
 3. Smoke-test a map with no lightmap data and a map with full lightmap
    data when touching lightmap or mesh code.
+4. Verify player movement (WASD, jump, noclip) and mouse look feel
+   smooth at various frame rates.
 
 Always rebuild after edits and confirm the binary still links before
 declaring work done.
@@ -177,7 +165,7 @@ declaring work done.
 
 - Prefer editing existing files. Do not split a module into multiple
   files unless asked.
-- Update `docs/<module>.md` when you change a public API or alter how a
+- Update per-module docs when you change a public API or alter how a
   module works internally.
 - Update `CMakeLists.txt` when adding a new `.c` file.
 - Update `README.md` if user-visible behaviour (controls, asset
@@ -186,6 +174,3 @@ declaring work done.
   Raylib is the only allowed dependency.
 - Do not introduce shaders that depend on features beyond GLSL 330
   (the existing target).
-- Keep the proprietary license header out of source files (no
-  SPDX-License-Identifier). The single `LICENSE` file at the root is
-  authoritative.
