@@ -29,6 +29,7 @@
             "step_height": 18.0,
             "accelerate": 10.0,
             "air_accelerate": 70.0,
+            "air_wishspeed_cap": 30.0,
             "max_speed": 320.0,
             "friction": 6.0,
             "stop_speed": 100.0,

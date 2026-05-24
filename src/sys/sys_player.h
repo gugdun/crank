@@ -15,6 +15,7 @@ typedef struct {
 
     float   accelerate;         // ground acceleration
     float   air_accelerate;     // air acceleration
+    float   air_wishspeed_cap;  // GoldSrc-style cap on wishspeed in air (30 = HL)
     float   max_speed;          // target horizontal speed
     float   friction;           // ground friction
     float   stop_speed;         // floor below which friction uses stop_speed

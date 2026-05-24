@@ -19,6 +19,14 @@ static ecs_component_id g_c_velocity = ECS_MAX_COMPONENTS;
 #define MAX_CLIP_PLANES 5
 #define STOP_EPSILON    0.1f
 
+// GoldSrc PM_CategorizePosition uses 180 u/s as the threshold above which a
+// downward ground re-test is skipped. We reuse the same number so that the
+// snap-to-ground logic cannot eat a fresh jump impulse.
+#define GROUND_VY_GUARD 180.0f
+
+// A plane whose y-normal is at least this counts as walkable ground.
+#define WALKABLE_NORMAL_Y 0.7f
+
 static void read_c_player(void *data, sjson_node *node) {
     c_player *p = data;
     sjson_get_floats((float *)&p->half_extents, 3, node, "half_extents");
@@ -28,16 +36,17 @@ static void read_c_player(void *data, sjson_node *node) {
     // Note: render-time eye_height lives on c_view (see sys_view.h),
     // not on c_player. This keeps the simulation pose pure and lets the
     // view system own all rendering-side offsets.
-    p->step_height    = sjson_get_float(node, "step_height",    18.0f);
-    p->accelerate     = sjson_get_float(node, "accelerate",     10.0f);
-    p->air_accelerate = sjson_get_float(node, "air_accelerate", 1.0f);
-    p->max_speed      = sjson_get_float(node, "max_speed",      320.0f);
-    p->friction       = sjson_get_float(node, "friction",       6.0f);
-    p->stop_speed     = sjson_get_float(node, "stop_speed",     100.0f);
-    p->gravity        = sjson_get_float(node, "gravity",        800.0f);
-    p->jump_speed     = sjson_get_float(node, "jump_speed",     270.0f);
-    p->on_ground      = 0;
-    p->noclip         = sjson_get_bool(node, "noclip", false) ? 1 : 0;
+    p->step_height       = sjson_get_float(node, "step_height",       18.0f);
+    p->accelerate        = sjson_get_float(node, "accelerate",        10.0f);
+    p->air_accelerate    = sjson_get_float(node, "air_accelerate",    10.0f);
+    p->air_wishspeed_cap = sjson_get_float(node, "air_wishspeed_cap", 30.0f);
+    p->max_speed         = sjson_get_float(node, "max_speed",         320.0f);
+    p->friction          = sjson_get_float(node, "friction",          6.0f);
+    p->stop_speed        = sjson_get_float(node, "stop_speed",        100.0f);
+    p->gravity           = sjson_get_float(node, "gravity",           800.0f);
+    p->jump_speed        = sjson_get_float(node, "jump_speed",        270.0f);
+    p->on_ground         = 0;
+    p->noclip            = sjson_get_bool(node, "noclip", false) ? 1 : 0;
 }
 
 static void read_c_velocity(void *data, sjson_node *node) {
@@ -68,14 +77,17 @@ static Vector3 clip_velocity(Vector3 in, Vector3 normal, float overbounce) {
     return out;
 }
 
-static Vector3 project_onto_plane(Vector3 v, Vector3 normal) {
-    float d = Vector3DotProduct(v, normal);
-    return Vector3Subtract(v, Vector3Scale(normal, d));
-}
-
-// Slide along contact planes (Q2 PM_SlideMove). Walks up to MAX_CLIP_PLANES
-// iterations, each iteration clipping velocity against the latest plane it
-// hit. Returns updated position via *pos and updated velocity via *vel.
+// Slide along contact planes (Q2 PM_SlideMove with a GoldSrc tweak). Walks up
+// to MAX_CLIP_PLANES iterations, each iteration clipping velocity against the
+// latest plane it hit.
+//
+// GoldSrc tweak: when the contact plane is walkable ground (normal.y >= 0.7)
+// and the player was moving up the slope, rescale the horizontal component
+// of the clipped velocity so that |xz| is preserved. This is the source of
+// the GoldSrc "no speed loss on slopes" feel and is required for strong
+// uphill strafing.
+//
+// Returns updated position via *pos and updated velocity via *vel.
 // `time_left` is the remaining dt for the move.
 static void slide_move(const phys_world *phys,
                        Vector3 *pos,
@@ -138,7 +150,24 @@ static void slide_move(const phys_world *phys,
         // block the move, clip along their crease.
         int j;
         for (i = 0; i < num_planes; i++) {
+            // Pre-clip horizontal speed (for the GoldSrc slope-speed boost).
+            float pre_xz = sqrtf(vel->x * vel->x + vel->z * vel->z);
+
             Vector3 clipped = clip_velocity(*vel, planes[i], OVERCLIP);
+
+            // GoldSrc slope-speed preservation: if we just clipped against a
+            // walkable plane, restore the horizontal speed magnitude. This
+            // keeps strafes on inclines responsive instead of bleeding into
+            // the normal direction.
+            if (planes[i].y >= WALKABLE_NORMAL_Y) {
+                float post_xz = sqrtf(clipped.x * clipped.x + clipped.z * clipped.z);
+                if (post_xz > 0.001f && pre_xz > post_xz) {
+                    float scale = pre_xz / post_xz;
+                    clipped.x *= scale;
+                    clipped.z *= scale;
+                }
+            }
+
             // Make sure clipped velocity moves us away from every other plane.
             for (j = 0; j < num_planes; j++) {
                 if (j == i) continue;
@@ -161,11 +190,6 @@ static void slide_move(const phys_world *phys,
             float d = Vector3DotProduct(dir, *vel);
             *vel = Vector3Scale(dir, d);
         }
-
-        // Avoid tiny oscillations: if the new velocity points against the
-        // original move direction, stop. (Q2 does the same check using the
-        // primal_velocity stored at entry.)
-        // This guards against running away from the original move into a wall.
     }
 }
 
@@ -221,7 +245,7 @@ static void step_slide_move(const phys_world *phys,
         up_pos = tr.endpos;
     }
     // Snap to ground if we landed on something solid pointing up.
-    if (tr.fraction < 1.0f && tr.plane_normal.y < 0.7f) {
+    if (tr.fraction < 1.0f && tr.plane_normal.y < WALKABLE_NORMAL_Y) {
         // We didn't land on a walkable surface; reject the step-up.
         *pos = down_pos;
         *vel = down_vel;
@@ -247,7 +271,7 @@ static void step_slide_move(const phys_world *phys,
     }
 }
 
-static void apply_friction(c_player *pl, Vector3 *vel, float dt) {
+static void apply_friction(const c_player *pl, Vector3 *vel, float dt) {
     // Horizontal speed only.
     float speed = sqrtf(vel->x * vel->x + vel->z * vel->z);
     if (speed < 1.0f) {
@@ -264,7 +288,7 @@ static void apply_friction(c_player *pl, Vector3 *vel, float dt) {
     vel->z *= newspeed;
 }
 
-static void accelerate(Vector3 *vel, Vector3 wishdir, float wishspeed, float accel, float dt) {
+static void pm_accelerate(Vector3 *vel, Vector3 wishdir, float wishspeed, float accel, float dt) {
     float currentspeed = vel->x * wishdir.x + vel->y * wishdir.y + vel->z * wishdir.z;
     float addspeed = wishspeed - currentspeed;
     if (addspeed <= 0.0f) return;
@@ -273,6 +297,145 @@ static void accelerate(Vector3 *vel, Vector3 wishdir, float wishspeed, float acc
     vel->x += accelspeed * wishdir.x;
     vel->y += accelspeed * wishdir.y;
     vel->z += accelspeed * wishdir.z;
+}
+
+// Compute horizontal wishdir + wishspeed from the user command. wishdir is
+// kept strictly horizontal (no projection onto the ground plane); GoldSrc
+// behaviour on slopes is produced by the slide-move + ground snap, not by
+// rotating the input vector.
+static void pm_build_wish(const c_usercmd *cmd, float max_speed,
+                          Vector3 *out_wishdir, float *out_wishspeed) {
+    float yaw_rad = cmd->yaw * DEG2RAD;
+    // sys_fpcam_apply_transform_to_camera: forward at yaw=0 is (1, 0, 0).
+    Vector3 fwd_xz   = (Vector3){ cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
+    Vector3 right_xz = (Vector3){-sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
+
+    Vector3 wishvel = {0, 0, 0};
+    wishvel.x = fwd_xz.x * cmd->in_fwd + right_xz.x * cmd->in_rt;
+    wishvel.z = fwd_xz.z * cmd->in_fwd + right_xz.z * cmd->in_rt;
+
+    float wishlen = sqrtf(wishvel.x * wishvel.x + wishvel.z * wishvel.z);
+    Vector3 wishdir = {0, 0, 0};
+    float wishspeed = 0.0f;
+    if (wishlen > 0.0f) {
+        wishdir.x = wishvel.x / wishlen;
+        wishdir.z = wishvel.z / wishlen;
+        wishspeed = max_speed;
+    }
+    *out_wishdir = wishdir;
+    *out_wishspeed = wishspeed;
+}
+
+// PM_CategorizePosition: short downward trace to decide if we are standing
+// on a walkable surface. Returns 1 if grounded.
+//
+// `just_jumped` short-circuits the trace: on the tick a jump fires we must
+// not re-categorize as grounded, otherwise the snap-down at the bottom of
+// the move would glue the player back onto a slope. The same guard applies
+// when the vertical velocity is still high (> GROUND_VY_GUARD) because that
+// only happens on a fresh jump or pad bounce.
+static int pm_categorize_position(const phys_world *phys,
+                                  Vector3 pos,
+                                  Vector3 half_extents,
+                                  Vector3 velocity,
+                                  int just_jumped,
+                                  phys_trace *out_tr) {
+    Vector3 end = pos;
+    end.y -= 2.0f;
+    phys_trace tr;
+    phys_trace_box(phys, pos, end, half_extents, PHYS_MASK_PLAYERSOLID, &tr);
+    if (out_tr != NULL) *out_tr = tr;
+
+    if (just_jumped) return 0;
+    if (velocity.y > GROUND_VY_GUARD) return 0;
+    if (tr.fraction >= 1.0f) return 0;
+    if (tr.plane_normal.y < WALKABLE_NORMAL_Y) return 0;
+    return 1;
+}
+
+// Rising-edge jump check. If pressed and we are on the ground, apply jump
+// impulse and clear on_ground. Returns 1 if a jump fired this tick.
+static int pm_check_jump(c_player *pl, c_velocity *vc,
+                         uint16_t prev_buttons, uint16_t curr_buttons) {
+    uint16_t prev_jump = prev_buttons & CMD_BUTTON_JUMP;
+    uint16_t curr_jump = curr_buttons & CMD_BUTTON_JUMP;
+    if (curr_jump && !prev_jump && pl->on_ground) {
+        vc->velocity.y = pl->jump_speed;
+        pl->on_ground = 0;
+        return 1;
+    }
+    return 0;
+}
+
+// Ground move (GoldSrc PM_WalkMove): friction -> accel -> step-slide.
+static void pm_walk_move(c_player *pl, c_transform *t, c_velocity *vc,
+                         const phys_world *phys, const c_usercmd *cmd) {
+    apply_friction(pl, &vc->velocity, cmd->dt_sec);
+
+    // Strip residual downward velocity so the slide move travels horizontally
+    // along the floor. The post-move snap re-attaches us to the slope.
+    if (vc->velocity.y < 0.0f) vc->velocity.y = 0.0f;
+
+    Vector3 wishdir;
+    float   wishspeed;
+    pm_build_wish(cmd, pl->max_speed, &wishdir, &wishspeed);
+
+    pm_accelerate(&vc->velocity, wishdir, wishspeed,
+                  pl->accelerate, cmd->dt_sec);
+
+    step_slide_move(phys, &t->position, &vc->velocity,
+                    pl->half_extents, PHYS_MASK_PLAYERSOLID,
+                    pl->step_height, /*on_ground=*/1, cmd->dt_sec);
+}
+
+// Air move (GoldSrc PM_AirMove): air-accel with capped wishspeed -> gravity
+// -> plain slide. No step-up while airborne.
+static void pm_air_move(c_player *pl, c_transform *t, c_velocity *vc,
+                        const phys_world *phys, const c_usercmd *cmd) {
+    Vector3 wishdir;
+    float   wishspeed;
+    pm_build_wish(cmd, pl->max_speed, &wishdir, &wishspeed);
+
+    // GoldSrc air control: clamp the wishspeed used by accelerate to a small
+    // value (sv_air_wishspeed_cap, default 30). The wishdir itself is
+    // unchanged, so strafing into the side of your motion still steers it
+    // -- this is what produces the classic HL air-strafe / bunny-hop feel.
+    float air_wishspeed = wishspeed;
+    if (air_wishspeed > pl->air_wishspeed_cap) {
+        air_wishspeed = pl->air_wishspeed_cap;
+    }
+    pm_accelerate(&vc->velocity, wishdir, air_wishspeed,
+                  pl->air_accelerate, cmd->dt_sec);
+
+    vc->velocity.y -= pl->gravity * cmd->dt_sec;
+
+    slide_move(phys, &t->position, &vc->velocity,
+               pl->half_extents, PHYS_MASK_PLAYERSOLID, cmd->dt_sec);
+}
+
+// Post-move snap-to-ground. After the slide move, if we were almost certainly
+// still on the floor (no fresh jump, vy not high), trace a short distance
+// down to glue us to the slope. This is what stops the player drifting off
+// the surface of a ramp while running along it.
+static void pm_snap_to_ground(c_player *pl, c_transform *t, c_velocity *vc,
+                              const phys_world *phys, int just_jumped) {
+    if (just_jumped) return;
+    if (vc->velocity.y > GROUND_VY_GUARD) return;
+
+    Vector3 start = t->position;
+    Vector3 end = t->position;
+    end.y -= 4.0f;
+    phys_trace tr;
+    phys_trace_box(phys, start, end, pl->half_extents,
+                   PHYS_MASK_PLAYERSOLID, &tr);
+
+    if (tr.allsolid) return;
+    if (tr.fraction >= 1.0f) return;
+    if (tr.plane_normal.y < WALKABLE_NORMAL_Y) return;
+
+    t->position = tr.endpos;
+    if (vc->velocity.y < 0.0f) vc->velocity.y = 0.0f;
+    pl->on_ground = 1;
 }
 
 void sys_player_update(ecs_world *w, const phys_world *phys) {
@@ -321,22 +484,15 @@ void sys_player_update(ecs_world *w, const phys_world *phys) {
             }
         }
 
-        // Build movement basis from yaw (raylib y-up).
-        float yaw_rad = cmd.yaw * DEG2RAD;
-        // sys_fpcam_apply_transform_to_camera: forward at yaw=0 is (1, 0, 0).
-        Vector3 fwd_xz   = (Vector3){ cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
-        Vector3 right_xz = (Vector3){-sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
-
-        float in_fwd = cmd.in_fwd;
-        float in_rt  = cmd.in_rt;
-
         if (pl->noclip) {
             // Fly: direct velocity from input, no physics.
-            float in_up = cmd.in_up;
+            float yaw_rad = cmd.yaw * DEG2RAD;
+            Vector3 fwd_xz   = (Vector3){ cosf(yaw_rad), 0.0f, -sinf(yaw_rad) };
+            Vector3 right_xz = (Vector3){-sinf(yaw_rad), 0.0f, -cosf(yaw_rad) };
             Vector3 move = {0, 0, 0};
-            move.x = fwd_xz.x * in_fwd + right_xz.x * in_rt;
-            move.y = in_up;
-            move.z = fwd_xz.z * in_fwd + right_xz.z * in_rt;
+            move.x = fwd_xz.x * cmd.in_fwd + right_xz.x * cmd.in_rt;
+            move.y = cmd.in_up;
+            move.z = fwd_xz.z * cmd.in_fwd + right_xz.z * cmd.in_rt;
             float len = Vector3Length(move);
             if (len > 0.0f) {
                 move = Vector3Scale(move, 1.0f / len);
@@ -347,109 +503,52 @@ void sys_player_update(ecs_world *w, const phys_world *phys) {
             t->position.z += move.z * speed * cmd.dt_sec;
             vc->velocity = (Vector3){0, 0, 0};
             pl->on_ground = 0;
-        } else {
-            // Ground check: trace a small AABB down a tiny distance.
-            Vector3 ground_start = t->position;
-            Vector3 ground_end = t->position;
-            ground_end.y -= 2.0f;
-            phys_trace gt;
-            phys_trace_box(phys, ground_start, ground_end,
-                           pl->half_extents, PHYS_MASK_PLAYERSOLID, &gt);
-            int was_on_ground = pl->on_ground;
-            pl->on_ground = (gt.fraction < 1.0f && gt.plane_normal.y >= 0.7f) ? 1 : 0;
-
-            // Build desired horizontal direction.
-            Vector3 wishvel = {0, 0, 0};
-            wishvel.x = fwd_xz.x * in_fwd + right_xz.x * in_rt;
-            wishvel.z = fwd_xz.z * in_fwd + right_xz.z * in_rt;
-
-            if (pl->on_ground && gt.plane_normal.y >= 0.7f) {
-                wishvel = project_onto_plane(wishvel, gt.plane_normal);
-            }
-
-            float wishlen = sqrtf(wishvel.x * wishvel.x + wishvel.z * wishvel.z);
-            Vector3 wishdir = {0, 0, 0};
-            float wishspeed = 0.0f;
-            if (wishlen > 0.0f) {
-                wishdir.x = wishvel.x / wishlen;
-                wishdir.z = wishvel.z / wishlen;
-                wishspeed = pl->max_speed;
-            }
-
-            // Friction (ground only).
-            if (pl->on_ground) {
-                apply_friction(pl, &vc->velocity, cmd.dt_sec);
-            }
-
-            if (pl->on_ground && vc->velocity.y < 0.0f) {
-                vc->velocity.y = 0.0f;
-            }
-
-            // Accelerate.
-            if (pl->on_ground) {
-                vc->velocity.y = 0.0f;
-                accelerate(&vc->velocity, wishdir, wishspeed, pl->accelerate, cmd.dt_sec);
-            } else {
-                // Air control: clamp the projection so air strafing works.
-                float airwishspeed = wishspeed;
-                if (airwishspeed > 30.0f) airwishspeed = 30.0f;
-                accelerate(&vc->velocity, wishdir, airwishspeed, pl->air_accelerate, cmd.dt_sec);
-                vc->velocity.y -= pl->gravity * cmd.dt_sec;
-            }
-
-            // Jump.
-            {
-                uint16_t prev_jump = prev_buttons & CMD_BUTTON_JUMP;
-                uint16_t curr_jump = cmd.buttons & CMD_BUTTON_JUMP;
-                if (curr_jump && pl->on_ground) {
-                    vc->velocity.y = pl->jump_speed;
-                    pl->on_ground = 0;
-                }
-            }
-
-            // Step-slide-move.
-            step_slide_move(phys, &t->position, &vc->velocity,
-                            pl->half_extents, PHYS_MASK_PLAYERSOLID,
-                            pl->step_height, pl->on_ground, cmd.dt_sec);
-
-            if (was_on_ground && vc->velocity.y <= 0.0f) {
-                Vector3 snap_start = t->position;
-                Vector3 snap_end = t->position;
-                snap_end.y -= 4.0f;
-
-                phys_trace snap_tr;
-
-                phys_trace_box(
-                    phys,
-                    snap_start,
-                    snap_end,
-                    pl->half_extents,
-                    PHYS_MASK_PLAYERSOLID,
-                    &snap_tr
-                );
-
-                if (!snap_tr.allsolid &&
-                    snap_tr.fraction < 1.0f &&
-                    snap_tr.plane_normal.y >= 0.7f)
-                {
-                    t->position = snap_tr.endpos;
-
-                    if (vc->velocity.y < 0.0f)
-                        vc->velocity.y = 0.0f;
-
-                    pl->on_ground = 1;
-                }
-            }
-
-            // After moving, re-check ground so jump-next-frame works.
-            ground_start = t->position;
-            ground_end = t->position;
-            ground_end.y -= 2.0f;
-            phys_trace_box(phys, ground_start, ground_end,
-                           pl->half_extents, PHYS_MASK_PLAYERSOLID, &gt);
-            pl->on_ground = (gt.fraction < 1.0f && gt.plane_normal.y >= 0.7f) ? 1 : 0;
-            (void)was_on_ground;
+            continue;
         }
+
+        // ----- GoldSrc PM_PlayerMove order -----
+        //
+        // 1. CategorizePosition (pre-move): decides whether we are on the
+        //    ground for this tick. The vy / just_jumped guards are not yet
+        //    in play -- this is the first categorization of the tick so
+        //    just_jumped is always 0 here.
+        //
+        // 2. CheckJump: rising-edge jump. Must run BEFORE friction/accel so
+        //    the impulse is not consumed by friction this tick. Sets a flag
+        //    that disables every subsequent ground re-categorization /
+        //    snap-down for the rest of the tick.
+        //
+        // 3. WalkMove or AirMove: friction+accel+step_slide on the ground,
+        //    air_accel+gravity+slide in the air.
+        //
+        // 4. Snap-to-ground (only if !just_jumped && vy <= 180): pulls the
+        //    player back onto a walkable surface ~4 units below them. This
+        //    is what keeps you attached to slopes while running across them.
+        //
+        // 5. CategorizePosition (post-move): refresh on_ground for next tick.
+        //    Same vy / just_jumped guards apply, so a fresh jump leaves us
+        //    airborne until vy decays below the guard or we land.
+
+        phys_trace gt;
+        pl->on_ground = pm_categorize_position(phys, t->position,
+                                               pl->half_extents,
+                                               vc->velocity,
+                                               /*just_jumped=*/0, &gt);
+
+        int just_jumped = pm_check_jump(pl, vc, prev_buttons, cmd.buttons);
+
+        if (pl->on_ground && !just_jumped) {
+            pm_walk_move(pl, t, vc, phys, &cmd);
+        } else {
+            pm_air_move(pl, t, vc, phys, &cmd);
+        }
+
+        pm_snap_to_ground(pl, t, vc, phys, just_jumped);
+
+        pl->on_ground = pm_categorize_position(phys, t->position,
+                                               pl->half_extents,
+                                               vc->velocity,
+                                               just_jumped, NULL);
 
         // Camera matrix assembly is owned by sys_view_update (called once
         // per frame, with interpolation). sys_player_update no longer

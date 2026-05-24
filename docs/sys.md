@@ -280,7 +280,8 @@ typedef struct {
     float   step_height;        // step-up max (default 18)
 
     float   accelerate;         // ground accel (default 10)
-    float   air_accelerate;     // air accel (default 1)
+    float   air_accelerate;     // air accel (default 10, GoldSrc-style)
+    float   air_wishspeed_cap;  // wishspeed cap in air (default 30)
     float   max_speed;          // target speed (default 320)
     float   friction;           // ground friction (default 6)
     float   stop_speed;         // floor for friction (default 100)
@@ -327,17 +328,32 @@ it:
 5. **noclip path**: direct velocity from `cmd.in_fwd/in_rt/in_up`
    (with `SPACE`/`SHIFT` as world-Y), skip physics. Uses `cmd.yaw` for
    the movement basis.
-6. **physics path**:
-    - Ground-trace 2 units down; `on_ground = 1` iff hit normal Y ≥ 0.7.
-    - Apply friction on ground (Q2 `PM_Friction`).
-    - Accelerate horizontally toward `wishdir` at `accelerate` (ground)
-      or `air_accelerate` (air, clamped to 30 units/sec wishspeed).
-    - Apply gravity if airborne.
-    - Apply jump if `SPACE` pressed and on ground (auto-hop).
-    - `step_slide_move`: try the slide move flat; if on ground, also
-      try step-up (move up by `step_height`, slide, step back down) and
-      keep whichever ended further horizontally on a walkable surface.
-    - Re-check ground for the next tick.
+6. **physics path** — follows GoldSrc `PM_PlayerMove` ordering:
+
+    1. **CategorizePosition (pre-move):** trace 2 units down; the player
+       is grounded iff the hit normal Y ≥ 0.7. *Skipped (forced not
+       grounded) if `velocity.y > 180` — this is the same guard GoldSrc
+       uses to stop a fresh jump being immediately re-grounded.*
+    2. **CheckJump:** rising-edge `SPACE`. If on ground, sets
+       `velocity.y = jump_speed`, clears `on_ground`, and latches a
+       `just_jumped` flag for the rest of this tick.
+    3. **WalkMove (grounded, not just-jumped):** friction → strip
+       residual downward velocity → build *horizontal* `wishdir` (no
+       projection onto the ground plane) → `pm_accelerate` at
+       `accelerate` → `step_slide_move`.
+    4. **AirMove (otherwise):** build horizontal `wishdir` → clamp
+       wishspeed to `air_wishspeed_cap` (default 30) → `pm_accelerate`
+       at `air_accelerate` → apply gravity → plain `slide_move`. The
+       wishspeed cap is what produces the powerful GoldSrc air-strafe /
+       bunny-hop feel; the wishdir itself is not clipped.
+    5. **Snap-to-ground:** if `!just_jumped && velocity.y ≤ 180`,
+       trace 4 units down and reattach to a walkable plane. This is
+       what keeps the player anchored to slopes while running across
+       them. Both guards are mandatory; the previous implementation
+       used only `was_on_ground && vy ≤ 0`, which mis-fired on slopes
+       and stole the jump impulse.
+    6. **CategorizePosition (post-move):** same trace + guards as step
+       1, refreshes `on_ground` for next tick's jump latch.
 
 `sys_player_update` no longer writes to `c_camera`. The view system owns
 all camera-matrix assembly.
@@ -348,6 +364,13 @@ up to four bumps. Velocity is clipped against contact planes with
 two-plane creases fall back to motion along the cross product of the
 two normals.
 
+**Slope speed preservation (GoldSrc):** when `slide_move` clips against
+a walkable plane (`normal.y ≥ 0.7`), the horizontal magnitude of the
+clipped velocity is rescaled back up to match the pre-clip horizontal
+magnitude. This stops slopes from bleeding `xz` speed into the slope's
+normal, which is the source of GoldSrc's "no speed loss running up a
+ramp" feel. Wall clips (normal.y < 0.7) are unaffected.
+
 `PHYS_MASK_PLAYERSOLID` is used for every trace — solid world,
 windows, and `func_*` player-clip brushes block the player.
 
@@ -355,10 +378,14 @@ windows, and `func_*` player-clip brushes block the player.
 
 Each frame the controller issues:
 
-- 1 ground-check trace (downward, 2 units).
+- 1 ground-check trace (downward, 2 units) — pre-move CategorizePosition.
 - Up to 4 slide-move traces.
-- (Optional) 3 step-up traces (vertical up, slide, vertical down).
-- 1 final ground-check trace for next frame's jump latch.
+- (Optional) 3 step-up traces (vertical up, slide, vertical down) when
+  on the ground.
+- 1 snap-to-ground trace (downward, 4 units) — skipped on the jump tick
+  and when `velocity.y > 180`.
+- 1 final ground-check trace (downward, 2 units) — post-move
+  CategorizePosition.
 
 On Quake II maps this resolves under 10 µs total per frame, dominated
 by the broadphase AABB rejection.
