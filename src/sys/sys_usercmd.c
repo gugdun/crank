@@ -59,8 +59,8 @@ void sys_usercmd_accumulate(ecs_world *w, float frame_dt) {
         q->pending.in_rt  = (float)IsKeyDown(KEY_A) - (float)IsKeyDown(KEY_D);
         q->pending.in_up  = (float)IsKeyDown(KEY_SPACE) - (float)IsKeyDown(KEY_LEFT_SHIFT);
 
-        if (IsKeyDown(KEY_SPACE) || GetMouseWheelMove()) q->pending_buttons |= CMD_BUTTON_JUMP;
-        if (IsKeyDown(KEY_F)) q->pending_buttons |= CMD_BUTTON_NOCLIP;
+        if (IsKeyPressed(KEY_SPACE) || GetMouseWheelMove()) q->pending_buttons |= CMD_BUTTON_JUMP;
+        if (IsKeyPressed(KEY_F)) q->pending_buttons |= CMD_BUTTON_NOCLIP;
     }
 }
 
